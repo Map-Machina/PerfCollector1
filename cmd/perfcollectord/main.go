@@ -116,8 +116,8 @@ func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Req
 			e, ok := cmd.Payload.(types.PCError)
 			if !ok {
 				// Should not happen
-				log.Errorf("oobHandler type assertion error: %T",
-					e)
+				log.Errorf("oobHandler command type assertion "+
+					"error: %T", cmd.Payload)
 				continue
 			}
 			log.Errorf("oobHandler remote error: version %v tag %v"+
@@ -135,9 +135,8 @@ func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Req
 			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
 			cmdId = types.PCCmd
 			reply, err = types.Encode(types.PCCommand{
-				Version: types.PCVersion,
-				Tag:     cmd.Tag,
-				Cmd:     types.PCErrorCmd,
+				Tag: cmd.Tag,
+				Cmd: types.PCErrorCmd,
 				Payload: types.PCError{
 					Error: "unknown OOB request: " + cmd.Cmd,
 				},

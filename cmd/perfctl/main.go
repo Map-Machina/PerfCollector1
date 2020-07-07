@@ -40,7 +40,8 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 	p.Unlock()
 
 	// Send OOB
-	cmd.Tag = tag // Set tag
+	cmd.Version = types.PCVersion // Set version
+	cmd.Tag = tag                 // Set tag
 	_, err = channel.SendRequest(types.PCCmd, false, reply)
 
 	return err
@@ -55,6 +56,10 @@ func (p *PerfCtl) sendAndWait(channel ssh.Channel, cmd types.PCCommand) (interfa
 		return nil, err
 	}
 	reply := <-c
+	// Check to see if we got an error
+	if e, ok := reply.(error); ok {
+		return nil, e
+	}
 
 	return reply, nil
 }
@@ -104,13 +109,13 @@ func (p *PerfCtl) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) 
 			// Log error and move on.
 			e, ok := cmd.Payload.(types.PCError)
 			if ok {
-				log.Errorf("oobHandler remote error: "+
-					"version %v tag %v cmd %v error %v",
+				reply = fmt.Errorf("oobHandler remote error: "+
+					"version: %v tag: %v cmd: '%v' error: %v",
 					cmd.Version, cmd.Tag, cmd.Cmd, e.Error)
 			} else {
 				// Should not happen
-				log.Errorf("oobHandler type assertion error: %T",
-					e)
+				log.Errorf("oobHandler command type assertion "+
+					"error: %T", cmd.Payload)
 			}
 
 		case types.PCCollectOnceReplyCmd:
@@ -197,8 +202,7 @@ func _main() error {
 
 	// Do one time collection
 	reply, err := pc.sendAndWait(channel, types.PCCommand{
-		Version: types.PCVersion,
-		Cmd:     types.PCCollectOnceCmd,
+		Cmd: types.PCCollectOnceCmd,
 		Payload: types.PCCollectOnce{
 			Systems: []string{"version", "uptime"},
 		},

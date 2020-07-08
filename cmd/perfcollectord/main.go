@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/gob"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/businessperformancetuning/sizer/types"
 	"github.com/businessperformancetuning/sizer/util"
@@ -79,9 +81,125 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	return types.Encode(reply)
 }
 
+func (p *PerfCollector) startCollection(sc types.PCStartCollection, channel ssh.Channel, eod chan struct{}) {
+	log.Tracef("startCollection %v", sc.Frequency)
+	defer log.Tracef("startCollection %v exit", sc.Frequency)
+
+	filenames := make([]string, len(sc.Systems))
+	for k, v := range sc.Systems {
+		filenames[k] = filepath.Join("/proc", v)
+	}
+
+	measurements := make(chan *types.PCCollection, sc.QueueDepth)
+	// Flusher function
+	go func() {
+		log.Tracef("flusher %v", sc.QueueDepth)
+		defer log.Tracef("flusher %v exit", sc.QueueDepth)
+
+		// Create network encoder
+		enc := gob.NewEncoder(channel)
+		for {
+			select {
+			case m := <-measurements:
+				log.Tracef("flusher.. %v", len(measurements))
+				err := enc.Encode(*m)
+				if err != nil {
+					log.Errorf("flusher encode error: %v",
+						err)
+				}
+			case <-eod:
+				return
+			}
+		}
+	}()
+
+	t := time.Tick(sc.Frequency) // Replace this with an elapsed time counter
+	for {
+		select {
+		case <-t:
+		case <-eod:
+			return
+		}
+		log.Tracef("startCollection: tick")
+
+		var err error
+		for k, v := range sc.Systems {
+			m := types.PCCollection{
+				System:    v,
+				Timestamp: time.Now(),
+			}
+
+			m.Measurement, err = ioutil.ReadFile(filenames[k])
+			if err != nil {
+				log.Errorf("startCollection: %v", err)
+				// Abort measurement.
+				continue
+			}
+
+			m.Duration = time.Now().Sub(m.Timestamp)
+
+			// Spill last measurement if queue depth is reached
+			select {
+			case measurements <- &m:
+			default:
+				log.Tracef("startCollection: spill %v",
+					len(measurements))
+			}
+		}
+
+	}
+}
+
+func (p *PerfCollector) handleStartCollection(cmd types.PCCommand, channel ssh.Channel, eod chan struct{}) ([]byte, error) {
+	log.Tracef("handleStartCollection %v", cmd.Cmd)
+	defer log.Tracef("handleStartCollection %v exit", cmd.Cmd)
+
+	sc, ok := cmd.Payload.(types.PCStartCollection)
+	if !ok {
+		// Should not happen
+		return nil, fmt.Errorf("handleStartCollection: type "+
+			"assertion error %T", sc)
+	}
+
+	// Verify frequency.
+	if sc.Frequency < time.Second {
+		// XXX return PCError instead
+		return nil, fmt.Errorf("bad frequency")
+	}
+
+	// Verify that all systems exist.
+	for _, v := range sc.Systems {
+		filename := filepath.Join("/proc", v)
+		if util.FileExists(filename) {
+			continue
+		}
+		// XXX return PCError instead
+		return nil, fmt.Errorf("bad system %v", filename)
+	}
+
+	// XXX handle already running collection
+
+	go p.startCollection(sc, channel, eod)
+
+	// Ack remote.
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCAck,
+	}
+	return types.Encode(reply)
+}
+
 func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
-	defer log.Tracef("oobHandler exit")
+
+	// Close channel
+	eod := make(chan struct{})
+
+	defer func() {
+		close(eod)
+		log.Tracef("oobHandler exit")
+	}()
 
 	for req := range requests {
 		log.Tracef("oobHandler req.Type: %v", req.Type)
@@ -124,6 +242,7 @@ func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Req
 				" cmd %v error %v", cmd.Version, cmd.Tag,
 				cmd.Cmd, e.Error)
 			continue
+
 		case types.PCCollectOnceCmd:
 			reply, err = p.handleOnce(cmd)
 			if err != nil {
@@ -131,6 +250,16 @@ func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Req
 				continue
 			}
 			cmdId = types.PCCmd
+
+		case types.PCStartCollectionCmd:
+			reply, err = p.handleStartCollection(cmd, channel, eod)
+			if err != nil {
+				log.Errorf("oobHandler handleStartCollection"+
+					": %v", err)
+				continue
+			}
+			cmdId = types.PCCmd
+
 		default:
 			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
 			cmdId = types.PCCmd
@@ -173,11 +302,11 @@ func (p *PerfCollector) handleChannel(conn *ssh.ServerConn, newChannel ssh.NewCh
 
 	go p.oobHandler(channel, requests)
 
-	_, err = channel.Write([]byte("Hello world from server\n"))
-	if err != nil {
-		log.Infof("write: %v", err)
-		return
-	}
+	//_, err = channel.Write([]byte("Hello world from server\n"))
+	//if err != nil {
+	//	log.Infof("write: %v", err)
+	//	return
+	//}
 
 	for {
 		log.Infof("loop")

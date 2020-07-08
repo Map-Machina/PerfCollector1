@@ -11,9 +11,11 @@ const (
 
 	// Command identifiers
 	PCCmd                 = "cmd" // Generic encapsulating command
+	PCAck                 = "ack" // Acknowledge command
 	PCErrorCmd            = "error"
 	PCCollectOnceCmd      = "collectonce"
 	PCCollectOnceReplyCmd = "collectoncereply"
+	PCStartCollectionCmd  = "startcollection"
 
 	PCChannel = "collector" // SSH channel name
 )
@@ -43,15 +45,22 @@ type PCCollectOnceReply struct {
 // PCStartCollection instructs the collector to start gathering data with the
 // provided parameters.
 type PCStartCollection struct {
-	Frequency time.Time // Collect performance data with this frequency
-	Systems   []string  // Performance statistics to grab.
-	// Max memory usage before spilling
+	Frequency  time.Duration // Collect performance data with this frequency
+	Systems    []string      // Performance statistics to grab.
+	QueueDepth int           // Max measurements before spilling
 }
 
 // PCStatus is the status of the collection.
 type PCCollectionStatus struct {
 	Frequency time.Time // Frequency of the collection
 	Systems   []string  // Systems that are being polled
+}
+
+type PCCollection struct {
+	Timestamp   time.Time     // Time of collection
+	Duration    time.Duration // Time collection took
+	System      string        // System tha was measured
+	Measurement []byte        // Raw measurement
 }
 
 func Encode(x interface{}) ([]byte, error) {

@@ -1,14 +1,14 @@
 package main
 
 import (
-	"bufio"
+	"encoding/gob"
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/businessperformancetuning/sizer/types"
 	"github.com/businessperformancetuning/sizer/util"
-	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -22,6 +22,9 @@ type PerfCtl struct {
 }
 
 func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan interface{}) error {
+	log.Tracef("send")
+	defer log.Tracef("send exit")
+
 	// Do expensive encode first
 	reply, err := types.Encode(cmd)
 	if err != nil {
@@ -39,6 +42,8 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 	p.tag++
 	p.Unlock()
 
+	log.Tracef("send %v", tag)
+
 	// Send OOB
 	cmd.Version = types.PCVersion // Set version
 	cmd.Tag = tag                 // Set tag
@@ -48,6 +53,9 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 }
 
 func (p *PerfCtl) sendAndWait(channel ssh.Channel, cmd types.PCCommand) (interface{}, error) {
+	log.Tracef("sendAndWait")
+	defer log.Tracef("sendAndWait exit")
+
 	// Callback channel
 	c := make(chan interface{})
 
@@ -92,6 +100,7 @@ func (p *PerfCtl) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) 
 			continue
 		}
 
+		log.Tracef("oobHandler tag %v", cmd.Tag)
 		// Free tag
 		p.Lock()
 		callback, ok := p.tags[cmd.Tag]
@@ -105,6 +114,8 @@ func (p *PerfCtl) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) 
 
 		var reply interface{}
 		switch cmd.Cmd {
+		case types.PCAck:
+			log.Tracef("oobHandler ack %v", cmd.Tag)
 		case types.PCErrorCmd:
 			// Log error and move on.
 			e, ok := cmd.Payload.(types.PCError)
@@ -201,16 +212,29 @@ func _main() error {
 	go pc.oobHandler(channel, requests)
 
 	// Do one time collection
+	//reply, err := pc.sendAndWait(channel, types.PCCommand{
+	//	Cmd: types.PCCollectOnceCmd,
+	//	Payload: types.PCCollectOnce{
+	//		Systems: []string{"version", "uptime"},
+	//	},
+	//})
+	//if err != nil {
+	//	return err
+	//}
+	//spew.Dump(reply)
+	log.Infof("sendAndWait")
 	reply, err := pc.sendAndWait(channel, types.PCCommand{
-		Cmd: types.PCCollectOnceCmd,
-		Payload: types.PCCollectOnce{
-			Systems: []string{"version", "uptime"},
+		Cmd: types.PCStartCollectionCmd,
+		Payload: types.PCStartCollection{
+			Frequency:  5 * time.Second,
+			QueueDepth: 10000,
+			Systems:    []string{"stat", "meminfo"},
 		},
 	})
 	if err != nil {
 		return err
 	}
-	spew.Dump(reply)
+	_ = reply
 
 	// Setup streaming
 	_, err = channel.Write([]byte("Hello world from client\n"))
@@ -218,13 +242,15 @@ func _main() error {
 		return err
 	}
 
-	r := bufio.NewReader(channel)
+	dec := gob.NewDecoder(channel)
 	for {
-		line, err := r.ReadString('\n')
+		var m types.PCCollection
+		err := dec.Decode(&m)
 		if err != nil {
 			return err
 		}
-		log.Infof("line: %v", line)
+
+		// Post process
 	}
 
 	return nil

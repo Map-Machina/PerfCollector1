@@ -44,7 +44,7 @@ var (
 	// application shutdown.
 	logRotator *rotator.Rotator
 
-	log = backendLog.Logger("PCTL")
+	log = backendLog.Logger("PPRD")
 )
 
 // Initialize package-global logger variables.
@@ -54,7 +54,7 @@ func init() {
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
 var subsystemLoggers = map[string]slog.Logger{
-	"PCTL": log,
+	"PPRD": log,
 }
 
 // initLogRotator initializes the logging rotator to write logs to logFile and

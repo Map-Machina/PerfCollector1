@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/gob"
 	"fmt"
 	"io/ioutil"
@@ -37,13 +38,13 @@ func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicK
 	return &ssh.Permissions{}, nil
 }
 
-func (p *PerfCollector) handleChannels(conn *ssh.ServerConn, chans <-chan ssh.NewChannel) {
+func (p *PerfCollector) handleChannels(ctx context.Context, conn *ssh.ServerConn, chans <-chan ssh.NewChannel) {
 	log.Tracef("handleChannels")
 	defer log.Tracef("handleChannels exit")
 
 	for newChannel := range chans {
 		log.Tracef("handleChannels: %v", newChannel.ChannelType())
-		go p.handleChannel(conn, newChannel)
+		go p.handleChannel(ctx, conn, newChannel)
 	}
 }
 
@@ -81,7 +82,7 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	return types.Encode(reply)
 }
 
-func (p *PerfCollector) startCollection(sc types.PCStartCollection, channel ssh.Channel, eod chan struct{}) {
+func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCollection, channel ssh.Channel) {
 	log.Tracef("startCollection %v", sc.Frequency)
 	defer log.Tracef("startCollection %v exit", sc.Frequency)
 
@@ -107,7 +108,7 @@ func (p *PerfCollector) startCollection(sc types.PCStartCollection, channel ssh.
 					log.Errorf("flusher encode error: %v",
 						err)
 				}
-			case <-eod:
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -117,7 +118,7 @@ func (p *PerfCollector) startCollection(sc types.PCStartCollection, channel ssh.
 	for {
 		select {
 		case <-t:
-		case <-eod:
+		case <-ctx.Done():
 			return
 		}
 		log.Tracef("startCollection: tick")
@@ -150,7 +151,7 @@ func (p *PerfCollector) startCollection(sc types.PCStartCollection, channel ssh.
 	}
 }
 
-func (p *PerfCollector) handleStartCollection(cmd types.PCCommand, channel ssh.Channel, eod chan struct{}) ([]byte, error) {
+func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
 	log.Tracef("handleStartCollection %v", cmd.Cmd)
 	defer log.Tracef("handleStartCollection %v exit", cmd.Cmd)
 
@@ -179,7 +180,7 @@ func (p *PerfCollector) handleStartCollection(cmd types.PCCommand, channel ssh.C
 
 	// XXX handle already running collection
 
-	go p.startCollection(sc, channel, eod)
+	go p.startCollection(ctx, sc, channel)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -190,14 +191,13 @@ func (p *PerfCollector) handleStartCollection(cmd types.PCCommand, channel ssh.C
 	return types.Encode(reply)
 }
 
-func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) {
+func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
 
-	// Close channel
-	eod := make(chan struct{})
+	ctx, cancel := context.WithCancel(pctx)
 
 	defer func() {
-		close(eod)
+		cancel()
 		log.Tracef("oobHandler exit")
 	}()
 
@@ -252,7 +252,7 @@ func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Req
 			cmdId = types.PCCmd
 
 		case types.PCStartCollectionCmd:
-			reply, err = p.handleStartCollection(cmd, channel, eod)
+			reply, err = p.handleStartCollection(ctx, cmd, channel)
 			if err != nil {
 				log.Errorf("oobHandler handleStartCollection"+
 					": %v", err)
@@ -284,7 +284,7 @@ func (p *PerfCollector) oobHandler(channel ssh.Channel, requests <-chan *ssh.Req
 	}
 }
 
-func (p *PerfCollector) handleChannel(conn *ssh.ServerConn, newChannel ssh.NewChannel) {
+func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn, newChannel ssh.NewChannel) {
 	log.Tracef("handleChannel")
 	defer log.Tracef("handleChannel exit")
 
@@ -300,7 +300,7 @@ func (p *PerfCollector) handleChannel(conn *ssh.ServerConn, newChannel ssh.NewCh
 		return
 	}
 
-	go p.oobHandler(channel, requests)
+	go p.oobHandler(ctx, channel, requests)
 
 	//_, err = channel.Write([]byte("Hello world from server\n"))
 	//if err != nil {
@@ -339,6 +339,8 @@ func (p *PerfCollector) sshServe(listen string, signer ssh.Signer) error {
 	}
 	sshConfig.AddHostKey(signer)
 
+	ctx := context.Background()
+
 	log.Infof("Listen: %v", listen)
 	for {
 		tcpConn, err := listener.Accept()
@@ -354,7 +356,7 @@ func (p *PerfCollector) sshServe(listen string, signer ssh.Signer) error {
 		}
 
 		go ssh.DiscardRequests(reqs)
-		go p.handleChannels(sshConn, chans)
+		go p.handleChannels(ctx, sshConn, chans)
 	}
 }
 

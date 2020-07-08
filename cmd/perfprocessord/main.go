@@ -7,8 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/businessperformancetuning/sizer/parser"
 	"github.com/businessperformancetuning/sizer/types"
 	"github.com/businessperformancetuning/sizer/util"
+	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -251,6 +253,24 @@ func _main() error {
 		}
 
 		// Post process
+		switch m.System {
+		case "stat":
+			s, err := parser.ProcessStat(m.Measurement)
+			if err != nil {
+				log.Errorf("could not process stat: %v", err)
+				continue
+			}
+			spew.Dump(s)
+		case "meminfo":
+			s, err := parser.ProcessMeminfo(m.Measurement)
+			if err != nil {
+				log.Errorf("could not process meminfo: %v", err)
+				continue
+			}
+			spew.Dump(s)
+		default:
+			log.Errorf("unknown system: %v", m.System)
+		}
 	}
 
 	return nil

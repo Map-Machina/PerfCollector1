@@ -101,7 +101,7 @@ func (p *PerfCollector) startCollection(sc types.PCStartCollection, channel ssh.
 		for {
 			select {
 			case m := <-measurements:
-				log.Tracef("flusher.. %v", len(measurements))
+				log.Tracef("flusher %v", len(measurements))
 				err := enc.Encode(*m)
 				if err != nil {
 					log.Errorf("flusher encode error: %v",

@@ -54,6 +54,7 @@ type PCStartCollection struct {
 	QueueDepth int           // Max measurements before spilling
 }
 
+// PCSinkStatus is the current status of the sink thread.
 type PCSinkStatus struct {
 	QueueUsed          int  // Number of items on the queue
 	SinkEnabled        bool // Is the sink enabled

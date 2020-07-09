@@ -68,9 +68,9 @@ func (p *PerfCollector) handleChannels(ctx context.Context, conn *ssh.ServerConn
 	}
 }
 
-func (p *PerfCollector) handleRegisterStream(cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
-	log.Tracef("handleRegisterStream %v", cmd.Tag)
-	defer log.Tracef("handleRegisterStream %v exit", cmd.Tag)
+func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleRegisterSink %v", cmd.Tag)
+	defer log.Tracef("handleRegisterSink %v exit", cmd.Tag)
 
 	// Register stream
 	if p.getStreamRegistered() {
@@ -134,9 +134,9 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	return types.Encode(reply)
 }
 
-func (p *PerfCollector) networkFlusher() {
-	log.Tracef("networkFlusher")
-	defer log.Tracef("networkFlusher exit")
+func (p *PerfCollector) sink() {
+	log.Tracef("sink")
+	defer log.Tracef("sink exit")
 
 	// This code is a bit hard to read but the idea is that we only allow
 	// one stream sink and when the sink goes away we wait for a new
@@ -350,10 +350,10 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 				cmd.Cmd, e.Error)
 			continue
 
-		case types.PCRegisterStream:
-			reply, err = p.handleRegisterStream(cmd, channel)
+		case types.PCRegisterSink:
+			reply, err = p.handleRegisterSink(cmd, channel)
 			if err != nil {
-				log.Errorf("oobHandler handleRegisterStream:"+
+				log.Errorf("oobHandler handleRegisterSink:"+
 					" %v", err)
 				continue
 			}
@@ -514,8 +514,8 @@ func _main() error {
 		return err
 	}
 
-	// Prepare network flusher
-	go pc.networkFlusher()
+	// Prepare sink
+	go pc.sink()
 
 	// Listen for incoming SSH connections.
 	listenC := make(chan error)

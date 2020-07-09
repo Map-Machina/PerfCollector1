@@ -227,7 +227,7 @@ func _main() error {
 	//spew.Dump(reply)
 	// Register this connection as the flusher
 	_, err = pc.sendAndWait(channel, types.PCCommand{
-		Cmd: types.PCRegisterStream,
+		Cmd: types.PCRegisterSink,
 	})
 	if err != nil {
 		return err

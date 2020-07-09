@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/gob"
 	"fmt"
 	"os"
@@ -55,7 +56,7 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 	return err
 }
 
-func (p *PerfCtl) sendAndWait(channel ssh.Channel, cmd types.PCCommand) (interface{}, error) {
+func (p *PerfCtl) sendAndWait(ctx context.Context, channel ssh.Channel, cmd types.PCCommand) (interface{}, error) {
 	log.Tracef("sendAndWait")
 	defer log.Tracef("sendAndWait exit")
 
@@ -66,7 +67,14 @@ func (p *PerfCtl) sendAndWait(channel ssh.Channel, cmd types.PCCommand) (interfa
 	if err != nil {
 		return nil, err
 	}
-	reply := <-c
+
+	var reply interface{}
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("sendAndWait abnormal termination")
+	case reply = <-c:
+	}
+
 	// Check to see if we got an error
 	if e, ok := reply.(error); ok {
 		return nil, e
@@ -75,9 +83,12 @@ func (p *PerfCtl) sendAndWait(channel ssh.Channel, cmd types.PCCommand) (interfa
 	return reply, nil
 }
 
-func (p *PerfCtl) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) {
+func (p *PerfCtl) oobHandler(cancel context.CancelFunc, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
-	defer log.Tracef("oobHandler exit")
+	defer func() {
+		cancel()
+		log.Tracef("oobHandler exit")
+	}()
 
 	for req := range requests {
 		log.Tracef("oobHandler req.Type: %v", req.Type)
@@ -161,18 +172,17 @@ func (p *PerfCtl) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) 
 		if callback != nil {
 			callback <- reply
 		}
-
 	}
 }
 
-func (p *PerfCtl) handleArgs(channel ssh.Channel, args []string) error {
+func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("impossible args length")
 	}
 
 	switch args[0] {
 	case "start":
-		_, err := p.sendAndWait(channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
 			Cmd: types.PCStartCollectionCmd,
 			Payload: types.PCStartCollection{
 				Frequency:  5 * time.Second,
@@ -187,7 +197,7 @@ func (p *PerfCtl) handleArgs(channel ssh.Channel, args []string) error {
 		}
 
 	case "stop":
-		_, err := p.sendAndWait(channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
 			Cmd:     types.PCStopCollectionCmd,
 			Payload: types.PCStopCollection{},
 		})
@@ -248,14 +258,15 @@ func _main() error {
 	defer channel.Close()
 
 	// Setup out of band handler.
-	go pc.oobHandler(channel, requests)
+	ctx, cancel := context.WithCancel(context.Background())
+	go pc.oobHandler(cancel, channel, requests)
 
 	if len(args) > 0 && args[0] != "sink" {
-		return pc.handleArgs(channel, args)
+		return pc.handleArgs(ctx, channel, args)
 	}
 
 	// Register sink.
-	_, err = pc.sendAndWait(channel, types.PCCommand{
+	_, err = pc.sendAndWait(ctx, channel, types.PCCommand{
 		Cmd: types.PCRegisterSink,
 	})
 	if err != nil {

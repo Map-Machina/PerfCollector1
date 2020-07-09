@@ -1,6 +1,12 @@
 package util
 
-import "os"
+import (
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // FilesExists reports whether the named file or directory exists.
 func FileExists(name string) bool {
@@ -10,4 +16,20 @@ func FileExists(name string) bool {
 		}
 	}
 	return true
+}
+
+func ValidSystem(s string) bool {
+	path := filepath.Clean(s)
+	if !strings.HasPrefix(path, "/proc/") {
+		return false
+	}
+	return FileExists(path)
+}
+
+func Measure(s string) ([]byte, error) {
+	path := filepath.Clean(s)
+	if !ValidSystem(path) {
+		return nil, fmt.Errorf("invalid system: %v", path)
+	}
+	return ioutil.ReadFile(path)
 }

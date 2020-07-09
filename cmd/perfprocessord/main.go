@@ -177,7 +177,9 @@ func (p *PerfCtl) handleArgs(channel ssh.Channel, args []string) error {
 			Payload: types.PCStartCollection{
 				Frequency:  5 * time.Second,
 				QueueDepth: 3, //10000,
-				Systems:    []string{"stat", "meminfo"},
+				Systems: []string{
+					"/proc/stat",
+					"/proc/meminfo"},
 			},
 		})
 		if err != nil {
@@ -271,14 +273,14 @@ func _main() error {
 
 		// Post process
 		switch m.System {
-		case "stat":
+		case "/proc/stat":
 			s, err := parser.ProcessStat(m.Measurement)
 			if err != nil {
 				log.Errorf("could not process stat: %v", err)
 				continue
 			}
 			spew.Dump(s)
-		case "meminfo":
+		case "/proc/meminfo":
 			s, err := parser.ProcessMeminfo(m.Measurement)
 			if err != nil {
 				log.Errorf("could not process meminfo: %v", err)

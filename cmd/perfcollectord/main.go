@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -58,6 +56,16 @@ func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicK
 	}
 
 	return &ssh.Permissions{}, nil
+}
+
+func protocolError(tag uint, format string, args ...interface{}) ([]byte, error) {
+	return types.Encode(types.PCCommand{
+		Tag: tag,
+		Cmd: types.PCErrorCmd,
+		Payload: types.PCError{
+			Error: fmt.Sprintf(format, args...),
+		},
+	})
 }
 
 func (p *PerfCollector) sink() {
@@ -144,16 +152,7 @@ func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Chan
 
 	// Register stream
 	if p.getStreamRegistered() {
-		reply := types.PCCommand{
-			Version: types.PCVersion,
-			Tag:     cmd.Tag,
-			Cmd:     types.PCErrorCmd,
-			Payload: types.PCError{
-				Error: "stream already registered",
-			},
-		}
-
-		return types.Encode(reply)
+		return protocolError(cmd.Tag, "stream already registered")
 	}
 	select {
 	case p.encoder <- gob.NewEncoder(channel):
@@ -186,11 +185,11 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	}
 	var err error
 	for k, v := range co.Systems {
-		filename := filepath.Join("/proc", v)
-		log.Tracef("handleOnce: %v", filename)
-		payload.Values[k], err = ioutil.ReadFile(filename)
+		log.Tracef("handleOnce: %v", v)
+		payload.Values[k], err = util.Measure(v)
 		if err != nil {
-			return nil, err
+			log.Errorf("handleOnce ReadFile: %v", err)
+			return protocolError(cmd.Tag, "invalid system: %v", v)
 		}
 	}
 
@@ -208,11 +207,6 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 	log.Tracef("startCollection %v", sc.Frequency)
 	defer log.Tracef("startCollection %v exit", sc.Frequency)
 
-	filenames := make([]string, len(sc.Systems))
-	for k, v := range sc.Systems {
-		filenames[k] = filepath.Join("/proc", v)
-	}
-
 	// XXX if we are already taking measurements we should fail
 	p.measurements = make(chan *types.PCCollection, sc.QueueDepth)
 	select {
@@ -221,7 +215,7 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 		panic("should not happen")
 	}
 
-	t := time.Tick(sc.Frequency) // Replace this with an elapsed time counter
+	t := time.Tick(sc.Frequency) // XXX Replace this with an elapsed time counter
 	for {
 		select {
 		case <-t:
@@ -230,16 +224,15 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 		case <-p.stopCollection:
 			return
 		}
-		log.Tracef("startCollection: tick")
 
 		var err error
-		for k, v := range sc.Systems {
+		for _, v := range sc.Systems {
 			m := types.PCCollection{
 				System:    v,
 				Timestamp: time.Now(),
 			}
 
-			m.Measurement, err = ioutil.ReadFile(filenames[k])
+			m.Measurement, err = util.Measure(v)
 			if err != nil {
 				log.Errorf("startCollection: %v", err)
 				// Abort measurement.
@@ -251,8 +244,8 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 			// Spill last measurement if queue depth is reached
 			select {
 			case p.measurements <- &m:
-				log.Tracef("startCollection: recording %v",
-					filenames[k])
+				log.Tracef("startCollection: recording %v", v)
+
 			default:
 				log.Tracef("startCollection: spill %v",
 					len(p.measurements))
@@ -267,25 +260,21 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 
 	sc, ok := cmd.Payload.(types.PCStartCollection)
 	if !ok {
-		// Should not happen
-		return nil, fmt.Errorf("handleStartCollection: type "+
-			"assertion error %T", sc)
+		return protocolError(cmd.Tag, "command type "+
+			"assertion error %v, %T", cmd.Cmd, sc)
 	}
 
 	// Verify frequency.
 	if sc.Frequency < time.Second {
-		// XXX return PCError instead
-		return nil, fmt.Errorf("bad frequency")
+		return protocolError(cmd.Tag, "bad frequency")
 	}
 
 	// Verify that all systems exist.
 	for _, v := range sc.Systems {
-		filename := filepath.Join("/proc", v)
-		if util.FileExists(filename) {
+		if util.FileExists(v) {
 			continue
 		}
-		// XXX return PCError instead
-		return nil, fmt.Errorf("bad system %v", filename)
+		return protocolError(cmd.Tag, "invalid system %v", v)
 	}
 
 	// XXX handle already running collection
@@ -307,9 +296,8 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 
 	sc, ok := cmd.Payload.(types.PCStopCollection)
 	if !ok {
-		// Should not happen
-		return nil, fmt.Errorf("handleStopCollection: type "+
-			"assertion error %T", sc)
+		return protocolError(cmd.Tag, "command type "+
+			"assertion error %v, %T", cmd.Cmd, sc)
 	}
 
 	// XXX return error if collection isn't running.
@@ -342,8 +330,6 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 	}()
 
 	for req := range requests {
-		log.Tracef("oobHandler req.Type: %v", req.Type)
-
 		// Always reply or else the other end may hang.
 		req.Reply(true, nil)
 
@@ -366,8 +352,8 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 
 		log.Tracef("oobHandler %v", spew.Sdump(cmd))
 
-		// XXX from here on out we must ack every command incoming
-		// command. Replies do not need to be acked.
+		// From here on out we must ack every command incoming command.
+		// Replies do not need to be acked.
 
 		var (
 			reply []byte
@@ -402,14 +388,8 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 			reply, err = p.handleStopCollection(ctx, cmd, channel)
 
 		default:
-			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
-			reply, err = types.Encode(types.PCCommand{
-				Tag: cmd.Tag,
-				Cmd: types.PCErrorCmd,
-				Payload: types.PCError{
-					Error: "unknown OOB request: " + cmd.Cmd,
-				},
-			})
+			reply, err = protocolError(cmd.Tag, "unknown OOB "+
+				"command: %v", cmd.Cmd)
 		}
 
 		// Deal with internal errors
@@ -420,14 +400,11 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 				cmd.Cmd, cmd.Tag, t.Unix(), err)
 			log.Debugf("oobHandler internal error command: %v",
 				spew.Sdump(cmd))
-			reply, err = types.Encode(types.PCCommand{
-				Tag: cmd.Tag,
-				Cmd: types.PCErrorCmd,
-				Payload: types.PCError{
-					Error: "internal error: " +
-						strconv.Itoa(int(t.Unix())),
-				},
-			})
+			reply, err = protocolError(cmd.Tag, "internal "+
+				"error: %v", strconv.Itoa(int(t.Unix())))
+			if err != nil {
+				log.Errorf("oobHandler encode: %v", err)
+			}
 		}
 
 		// Send payload to server.
@@ -460,14 +437,7 @@ func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn,
 
 	go p.oobHandler(ctx, channel, requests)
 
-	//_, err = channel.Write([]byte("Hello world from server\n"))
-	//if err != nil {
-	//	log.Infof("write: %v", err)
-	//	return
-	//}
-
 	for {
-		log.Infof("loop")
 		defer channel.Close()
 		r := bufio.NewReader(channel)
 		for {

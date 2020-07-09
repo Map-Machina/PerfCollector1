@@ -51,6 +51,7 @@ type config struct {
 	SSHKeyFile  string `long:"sshid" description:"File containing the ssh identity"`
 	User        string `long:"user" description:"SSH user name"`
 	Host        string `long:"host" description:"SSH host"`
+	Sink        bool   `long:"sink" description:"Launch in sink mode (daemon)"`
 }
 
 // serviceOptions defines the configuration options for the rpc as a service

@@ -16,6 +16,7 @@ const (
 	PCCollectOnceCmd      = "collectonce"
 	PCCollectOnceReplyCmd = "collectoncereply"
 	PCStartCollectionCmd  = "startcollection"
+	PCStopCollectionCmd   = "stopcollection"
 	PCRegisterSink        = "registersink"
 
 	PCChannel = "collector" // SSH channel name
@@ -49,6 +50,11 @@ type PCStartCollection struct {
 	Frequency  time.Duration // Collect performance data with this frequency
 	Systems    []string      // Performance statistics to grab.
 	QueueDepth int           // Max measurements before spilling
+}
+
+// PCStopCollectionCmd instructs the collector to stop collecting measurements.
+type PCStopCollection struct {
+	Destroy bool // When set the uncollected measurements will be discarded
 }
 
 // PCStatus is the status of the collection.
@@ -89,5 +95,6 @@ func init() {
 	gob.Register(PCCollectOnce{})
 	gob.Register(PCCollectOnceReply{})
 	gob.Register(PCStartCollection{})
+	gob.Register(PCStopCollection{})
 	gob.Register(PCCollectionStatus{})
 }

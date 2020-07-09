@@ -26,6 +26,7 @@ type PerfCollector struct {
 	encoder          chan *gob.Encoder        // New sink encoder
 	reload           chan struct{}            // Signal new encoder needs to be loaded
 	streamRegistered bool
+	stopCollection   chan struct{} // collection stop channel
 
 	cfg *config
 
@@ -225,6 +226,8 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 		case <-t:
 			//case <-ctx.Done():
 			//	return
+		case <-p.stopCollection:
+			return
 		}
 		log.Tracef("startCollection: tick")
 
@@ -285,7 +288,38 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 	}
 
 	// XXX handle already running collection
+	p.stopCollection = make(chan struct{})
 	go p.startCollection(ctx, sc)
+
+	// Ack remote.
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCAck,
+	}
+	return types.Encode(reply)
+}
+
+func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleStopCollection %v", cmd.Cmd)
+	defer log.Tracef("handleStopCollection %v exit", cmd.Cmd)
+
+	sc, ok := cmd.Payload.(types.PCStopCollection)
+	if !ok {
+		// Should not happen
+		return nil, fmt.Errorf("handleStopCollection: type "+
+			"assertion error %T", sc)
+	}
+
+	// XXX return error if collection isn't running.
+	p.measurements = nil
+	select {
+	case p.reload <- struct{}{}:
+	default:
+		panic("should not happen")
+	}
+
+	close(p.stopCollection)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -376,6 +410,14 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 			}
 			cmdId = types.PCCmd
 
+		case types.PCStopCollectionCmd:
+			reply, err = p.handleStopCollection(ctx, cmd, channel)
+			if err != nil {
+				log.Errorf("oobHandler handleStopCollection"+
+					": %v", err)
+				continue
+			}
+			cmdId = types.PCCmd
 		default:
 			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
 			cmdId = types.PCCmd

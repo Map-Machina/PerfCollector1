@@ -165,10 +165,44 @@ func (p *PerfCtl) oobHandler(channel ssh.Channel, requests <-chan *ssh.Request) 
 	}
 }
 
+func (p *PerfCtl) handleArgs(channel ssh.Channel, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("impossible args length")
+	}
+
+	switch args[0] {
+	case "start":
+		_, err := p.sendAndWait(channel, types.PCCommand{
+			Cmd: types.PCStartCollectionCmd,
+			Payload: types.PCStartCollection{
+				Frequency:  5 * time.Second,
+				QueueDepth: 3, //10000,
+				Systems:    []string{"stat", "meminfo"},
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+	case "stop":
+		_, err := p.sendAndWait(channel, types.PCCommand{
+			Cmd:     types.PCStopCollectionCmd,
+			Payload: types.PCStopCollection{},
+		})
+		if err != nil {
+			return err
+		}
+
+	default:
+		return fmt.Errorf("unknown command: %v", args[0])
+	}
+	return nil
+}
+
 func _main() error {
 	// Load configuration and parse command line.  This function also
 	// initializes logging and configures it accordingly.
-	loadedCfg, _, err := loadConfig()
+	loadedCfg, args, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("Could not load configuration file: %v", err)
 	}
@@ -226,6 +260,17 @@ func _main() error {
 	//}
 	//spew.Dump(reply)
 	// Register this connection as the flusher
+	// Setup streaming
+	//_, err = channel.Write([]byte("Hello world from client\n"))
+	//if err != nil {
+	//	return err
+	//}
+
+	if !pc.cfg.Sink {
+		return pc.handleArgs(channel, args)
+	}
+
+	// Register sink.
 	_, err = pc.sendAndWait(channel, types.PCCommand{
 		Cmd: types.PCRegisterSink,
 	})
@@ -233,24 +278,7 @@ func _main() error {
 		return err
 	}
 
-	_, err = pc.sendAndWait(channel, types.PCCommand{
-		Cmd: types.PCStartCollectionCmd,
-		Payload: types.PCStartCollection{
-			Frequency:  5 * time.Second,
-			QueueDepth: 3, //10000,
-			Systems:    []string{"stat", "meminfo"},
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	// Setup streaming
-	_, err = channel.Write([]byte("Hello world from client\n"))
-	if err != nil {
-		return err
-	}
-
+	// We are in sink mode. Register sink and process measurements.
 	dec := gob.NewDecoder(channel)
 	for {
 		var m types.PCCollection

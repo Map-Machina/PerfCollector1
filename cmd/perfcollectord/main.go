@@ -21,15 +21,26 @@ import (
 
 type PerfCollector struct {
 	sync.Mutex
-	measurements     chan *types.PCCollection // Measurements
-	encoder          chan *gob.Encoder        // New sink encoder
-	reload           chan struct{}            // Signal new encoder needs to be loaded
+	newEncoder       chan *gob.Encoder             // New sink encoder
+	newMeasurements  chan chan *types.PCCollection // New measurements channel
 	streamRegistered bool
-	stopCollection   chan struct{} // collection stop channel
+
+	stopCollection    chan struct{} // collection stop channel
+	collectionEnabled bool
 
 	cfg *config
 
 	allowedKeys map[string]struct{}
+}
+
+func protocolError(tag uint, format string, args ...interface{}) ([]byte, error) {
+	return types.Encode(types.PCCommand{
+		Tag: tag,
+		Cmd: types.PCErrorCmd,
+		Payload: types.PCError{
+			Error: fmt.Sprintf(format, args...),
+		},
+	})
 }
 
 func (p *PerfCollector) setStreamRegistered(s bool) {
@@ -42,6 +53,18 @@ func (p *PerfCollector) getStreamRegistered() bool {
 	p.Lock()
 	defer p.Unlock()
 	return p.streamRegistered
+}
+
+func (p *PerfCollector) setCollectionEnabled(s bool) {
+	p.Lock()
+	p.collectionEnabled = s
+	p.Unlock()
+}
+
+func (p *PerfCollector) getCollectionEnabled() bool {
+	p.Lock()
+	defer p.Unlock()
+	return p.collectionEnabled
 }
 
 func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -58,16 +81,6 @@ func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicK
 	return &ssh.Permissions{}, nil
 }
 
-func protocolError(tag uint, format string, args ...interface{}) ([]byte, error) {
-	return types.Encode(types.PCCommand{
-		Tag: tag,
-		Cmd: types.PCErrorCmd,
-		Payload: types.PCError{
-			Error: fmt.Sprintf(format, args...),
-		},
-	})
-}
-
 func (p *PerfCollector) sink() {
 	log.Tracef("sink")
 	defer log.Tracef("sink exit")
@@ -76,22 +89,28 @@ func (p *PerfCollector) sink() {
 	// one stream sink and when the sink goes away we wait for a new
 	// encoder to show up. When the new encoder arrives we flush all
 	// existing measurements.
-	var encoder *gob.Encoder
+	var (
+		encoder      *gob.Encoder
+		measurements chan *types.PCCollection
+	)
 	for {
 		select {
-		case _, ok := <-p.reload:
-			if !ok {
-				return
-			}
-			continue
-		case e, ok := <-p.encoder:
+		case e, ok := <-p.newEncoder:
 			if !ok {
 				return
 			}
 			encoder = e
 			p.setStreamRegistered(true)
+			continue
 
-		case m, ok := <-p.measurements:
+		case mc, ok := <-p.newMeasurements:
+			if !ok {
+				return
+			}
+			measurements = mc
+			continue
+
+		case m, ok := <-measurements:
 			if !ok {
 				return
 			}
@@ -103,16 +122,17 @@ func (p *PerfCollector) sink() {
 				if encoder == nil {
 					p.setStreamRegistered(false)
 					select {
-					case _, ok := <-p.reload:
-						if !ok {
-							return
-						}
-						continue
-					case e, ok := <-p.encoder:
+					case e, ok := <-p.newEncoder:
 						if !ok {
 							return
 						}
 						encoder = e
+					case mc, ok := <-p.newMeasurements:
+						if !ok {
+							return
+						}
+						measurements = mc
+						continue
 					}
 				}
 
@@ -124,9 +144,9 @@ func (p *PerfCollector) sink() {
 					continue
 				}
 
-				// Drain p.measurements
+				// Drain measurements
 				select {
-				case m, ok = <-p.measurements:
+				case m, ok = <-measurements:
 				default:
 					goto done
 				}
@@ -155,7 +175,7 @@ func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Chan
 		return protocolError(cmd.Tag, "stream already registered")
 	}
 	select {
-	case p.encoder <- gob.NewEncoder(channel):
+	case p.newEncoder <- gob.NewEncoder(channel):
 	default:
 		panic("shouldn't happen")
 	}
@@ -207,13 +227,15 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 	log.Tracef("startCollection %v", sc.Frequency)
 	defer log.Tracef("startCollection %v exit", sc.Frequency)
 
-	// XXX if we are already taking measurements we should fail
-	p.measurements = make(chan *types.PCCollection, sc.QueueDepth)
+	// Message new measurements channel
+	measurements := make(chan *types.PCCollection, sc.QueueDepth)
 	select {
-	case p.reload <- struct{}{}:
+	case p.newMeasurements <- measurements:
 	default:
 		panic("should not happen")
 	}
+
+	p.setCollectionEnabled(true)
 
 	t := time.Tick(sc.Frequency) // XXX Replace this with an elapsed time counter
 	for {
@@ -243,12 +265,12 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 
 			// Spill last measurement if queue depth is reached
 			select {
-			case p.measurements <- &m:
+			case measurements <- &m:
 				log.Tracef("startCollection: recording %v", v)
 
 			default:
 				log.Tracef("startCollection: spill %v",
-					len(p.measurements))
+					len(measurements))
 			}
 		}
 	}
@@ -277,7 +299,11 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 		return protocolError(cmd.Tag, "invalid system %v", v)
 	}
 
-	// XXX handle already running collection
+	// Only allow one collection to run.
+	if p.getCollectionEnabled() {
+		return protocolError(cmd.Tag, "collector already running")
+	}
+
 	p.stopCollection = make(chan struct{})
 	go p.startCollection(ctx, sc)
 
@@ -300,15 +326,18 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 			"assertion error %v, %T", cmd.Cmd, sc)
 	}
 
-	// XXX return error if collection isn't running.
-	p.measurements = nil
+	// Return error if collection isn't running.
+	if !p.getCollectionEnabled() {
+		return protocolError(cmd.Tag, "collector not running")
+	}
+
 	select {
-	case p.reload <- struct{}{}:
+	case p.newMeasurements <- nil:
 	default:
 		panic("should not happen")
 	}
-
 	close(p.stopCollection)
+	p.setCollectionEnabled(false)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -502,10 +531,10 @@ func _main() error {
 	}()
 
 	pc := &PerfCollector{
-		cfg:         loadedCfg,
-		allowedKeys: make(map[string]struct{}),
-		encoder:     make(chan *gob.Encoder),
-		reload:      make(chan struct{}),
+		cfg:             loadedCfg,
+		allowedKeys:     make(map[string]struct{}),
+		newEncoder:      make(chan *gob.Encoder),
+		newMeasurements: make(chan chan *types.PCCollection),
 	}
 	for _, v := range pc.cfg.AllowedKeys {
 		pc.allowedKeys[v] = struct{}{}

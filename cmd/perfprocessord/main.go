@@ -250,7 +250,7 @@ func _main() error {
 	// Setup out of band handler.
 	go pc.oobHandler(channel, requests)
 
-	if !pc.cfg.Sink {
+	if len(args) > 0 && args[0] != "sink" {
 		return pc.handleArgs(channel, args)
 	}
 

@@ -248,24 +248,6 @@ func _main() error {
 	// Setup out of band handler.
 	go pc.oobHandler(channel, requests)
 
-	// Do one time collection
-	//reply, err := pc.sendAndWait(channel, types.PCCommand{
-	//	Cmd: types.PCCollectOnceCmd,
-	//	Payload: types.PCCollectOnce{
-	//		Systems: []string{"version", "uptime"},
-	//	},
-	//})
-	//if err != nil {
-	//	return err
-	//}
-	//spew.Dump(reply)
-	// Register this connection as the flusher
-	// Setup streaming
-	//_, err = channel.Write([]byte("Hello world from client\n"))
-	//if err != nil {
-	//	return err
-	//}
-
 	if !pc.cfg.Sink {
 		return pc.handleArgs(channel, args)
 	}

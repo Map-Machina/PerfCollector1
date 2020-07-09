@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -57,6 +58,74 @@ func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicK
 	}
 
 	return &ssh.Permissions{}, nil
+}
+
+func (p *PerfCollector) sink() {
+	log.Tracef("sink")
+	defer log.Tracef("sink exit")
+
+	// This code is a bit hard to read but the idea is that we only allow
+	// one stream sink and when the sink goes away we wait for a new
+	// encoder to show up. When the new encoder arrives we flush all
+	// existing measurements.
+	var encoder *gob.Encoder
+	for {
+		select {
+		case _, ok := <-p.reload:
+			if !ok {
+				return
+			}
+			continue
+		case e, ok := <-p.encoder:
+			if !ok {
+				return
+			}
+			encoder = e
+			p.setStreamRegistered(true)
+
+		case m, ok := <-p.measurements:
+			if !ok {
+				return
+			}
+
+			// Loop in order to no lose measurement.
+			for {
+				// If there is no encoder wait for a new one to
+				// appear.
+				if encoder == nil {
+					p.setStreamRegistered(false)
+					select {
+					case _, ok := <-p.reload:
+						if !ok {
+							return
+						}
+						continue
+					case e, ok := <-p.encoder:
+						if !ok {
+							return
+						}
+						encoder = e
+					}
+				}
+
+				// Send measurement to sream.
+				err := encoder.Encode(*m)
+				if err != nil {
+					// Wait for new encoder
+					encoder = nil
+					continue
+				}
+
+				// Drain p.measurements
+				select {
+				case m, ok = <-p.measurements:
+				default:
+					goto done
+				}
+			}
+		done:
+		}
+	}
 }
 
 func (p *PerfCollector) handleChannels(ctx context.Context, conn *ssh.ServerConn, chans <-chan ssh.NewChannel) {
@@ -133,74 +202,6 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	}
 
 	return types.Encode(reply)
-}
-
-func (p *PerfCollector) sink() {
-	log.Tracef("sink")
-	defer log.Tracef("sink exit")
-
-	// This code is a bit hard to read but the idea is that we only allow
-	// one stream sink and when the sink goes away we wait for a new
-	// encoder to show up. When the new encoder arrives we flush all
-	// existing measurements.
-	var encoder *gob.Encoder
-	for {
-		select {
-		case _, ok := <-p.reload:
-			if !ok {
-				return
-			}
-			continue
-		case e, ok := <-p.encoder:
-			if !ok {
-				return
-			}
-			encoder = e
-			p.setStreamRegistered(true)
-
-		case m, ok := <-p.measurements:
-			if !ok {
-				return
-			}
-
-			// Loop in order to no lose measurement.
-			for {
-				// If there is no encoder wait for a new one to
-				// appear.
-				if encoder == nil {
-					p.setStreamRegistered(false)
-					select {
-					case _, ok := <-p.reload:
-						if !ok {
-							return
-						}
-						continue
-					case e, ok := <-p.encoder:
-						if !ok {
-							return
-						}
-						encoder = e
-					}
-				}
-
-				// Send measurement to sream.
-				err := encoder.Encode(*m)
-				if err != nil {
-					// Wait for new encoder
-					encoder = nil
-					continue
-				}
-
-				// Drain p.measurements
-				select {
-				case m, ok = <-p.measurements:
-				default:
-					goto done
-				}
-			}
-		done:
-		}
-	}
 }
 
 func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCollection) {
@@ -365,11 +366,14 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 
 		log.Tracef("oobHandler %v", spew.Sdump(cmd))
 
+		// XXX from here on out we must ack every command incoming
+		// command. Replies do not need to be acked.
+
 		var (
-			cmdId string
 			reply []byte
 		)
 		switch cmd.Cmd {
+		// COmmands that don't require ack.
 		case types.PCErrorCmd:
 			// Log error and move on.
 			e, ok := cmd.Payload.(types.PCError)
@@ -384,43 +388,21 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 				cmd.Cmd, e.Error)
 			continue
 
+			// Commands that require ack
 		case types.PCRegisterSink:
 			reply, err = p.handleRegisterSink(cmd, channel)
-			if err != nil {
-				log.Errorf("oobHandler handleRegisterSink:"+
-					" %v", err)
-				continue
-			}
-			cmdId = types.PCCmd
 
 		case types.PCCollectOnceCmd:
 			reply, err = p.handleOnce(cmd)
-			if err != nil {
-				log.Errorf("oobHandler handleOnce: %v", err)
-				continue
-			}
-			cmdId = types.PCCmd
 
 		case types.PCStartCollectionCmd:
 			reply, err = p.handleStartCollection(ctx, cmd, channel)
-			if err != nil {
-				log.Errorf("oobHandler handleStartCollection"+
-					": %v", err)
-				continue
-			}
-			cmdId = types.PCCmd
 
 		case types.PCStopCollectionCmd:
 			reply, err = p.handleStopCollection(ctx, cmd, channel)
-			if err != nil {
-				log.Errorf("oobHandler handleStopCollection"+
-					": %v", err)
-				continue
-			}
-			cmdId = types.PCCmd
+
 		default:
 			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
-			cmdId = types.PCCmd
 			reply, err = types.Encode(types.PCCommand{
 				Tag: cmd.Tag,
 				Cmd: types.PCErrorCmd,
@@ -430,12 +412,30 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 			})
 		}
 
+		// Deal with internal errors
+		if err != nil {
+			t := time.Now()
+			log.Errorf("oobHandler internal error cmd %v tag %v "+
+				"timestamp %v: %v",
+				cmd.Cmd, cmd.Tag, t.Unix(), err)
+			log.Debugf("oobHandler internal error command: %v",
+				spew.Sdump(cmd))
+			reply, err = types.Encode(types.PCCommand{
+				Tag: cmd.Tag,
+				Cmd: types.PCErrorCmd,
+				Payload: types.PCError{
+					Error: "internal error: " +
+						strconv.Itoa(int(t.Unix())),
+				},
+			})
+		}
+
 		// Send payload to server.
 		if reply == nil {
 			// Nothing to do
 			continue
 		}
-		_, err = channel.SendRequest(cmdId, false, reply)
+		_, err = channel.SendRequest(types.PCCmd, false, reply)
 		if err != nil {
 			log.Errorf("oobHandler SendRequest: %v", err)
 		}

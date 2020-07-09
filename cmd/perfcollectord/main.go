@@ -10,18 +10,38 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/businessperformancetuning/sizer/types"
 	"github.com/businessperformancetuning/sizer/util"
+	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ssh"
 )
 
 type PerfCollector struct {
+	sync.Mutex
+	measurements     chan *types.PCCollection // Measurements
+	encoder          chan *gob.Encoder        // New sink encoder
+	reload           chan struct{}            // Signal new encoder needs to be loaded
+	streamRegistered bool
+
 	cfg *config
 
 	allowedKeys map[string]struct{}
+}
+
+func (p *PerfCollector) setStreamRegistered(s bool) {
+	p.Lock()
+	p.streamRegistered = s
+	p.Unlock()
+}
+
+func (p *PerfCollector) getStreamRegistered() bool {
+	p.Lock()
+	defer p.Unlock()
+	return p.streamRegistered
 }
 
 func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -46,6 +66,38 @@ func (p *PerfCollector) handleChannels(ctx context.Context, conn *ssh.ServerConn
 		log.Tracef("handleChannels: %v", newChannel.ChannelType())
 		go p.handleChannel(ctx, conn, newChannel)
 	}
+}
+
+func (p *PerfCollector) handleRegisterStream(cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleRegisterStream %v", cmd.Tag)
+	defer log.Tracef("handleRegisterStream %v exit", cmd.Tag)
+
+	// Register stream
+	if p.getStreamRegistered() {
+		reply := types.PCCommand{
+			Version: types.PCVersion,
+			Tag:     cmd.Tag,
+			Cmd:     types.PCErrorCmd,
+			Payload: types.PCError{
+				Error: "stream already registered",
+			},
+		}
+
+		return types.Encode(reply)
+	}
+	select {
+	case p.encoder <- gob.NewEncoder(channel):
+	default:
+		panic("shouldn't happen")
+	}
+
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCAck,
+	}
+
+	return types.Encode(reply)
 }
 
 func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
@@ -82,7 +134,75 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	return types.Encode(reply)
 }
 
-func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCollection, channel ssh.Channel) {
+func (p *PerfCollector) networkFlusher() {
+	log.Tracef("networkFlusher")
+	defer log.Tracef("networkFlusher exit")
+
+	// This code is a bit hard to read but the idea is that we only allow
+	// one stream sink and when the sink goes away we wait for a new
+	// encoder to show up. When the new encoder arrives we flush all
+	// existing measurements.
+	var encoder *gob.Encoder
+	for {
+		select {
+		case _, ok := <-p.reload:
+			if !ok {
+				return
+			}
+			continue
+		case e, ok := <-p.encoder:
+			if !ok {
+				return
+			}
+			encoder = e
+			p.setStreamRegistered(true)
+
+		case m, ok := <-p.measurements:
+			if !ok {
+				return
+			}
+
+			// Loop in order to no lose measurement.
+			for {
+				// If there is no encoder wait for a new one to
+				// appear.
+				if encoder == nil {
+					p.setStreamRegistered(false)
+					select {
+					case _, ok := <-p.reload:
+						if !ok {
+							return
+						}
+						continue
+					case e, ok := <-p.encoder:
+						if !ok {
+							return
+						}
+						encoder = e
+					}
+				}
+
+				// Send measurement to sream.
+				err := encoder.Encode(*m)
+				if err != nil {
+					// Wait for new encoder
+					encoder = nil
+					continue
+				}
+
+				// Drain p.measurements
+				select {
+				case m, ok = <-p.measurements:
+				default:
+					goto done
+				}
+			}
+		done:
+		}
+	}
+}
+
+func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCollection) {
 	log.Tracef("startCollection %v", sc.Frequency)
 	defer log.Tracef("startCollection %v exit", sc.Frequency)
 
@@ -91,35 +211,20 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 		filenames[k] = filepath.Join("/proc", v)
 	}
 
-	measurements := make(chan *types.PCCollection, sc.QueueDepth)
-	// Flusher function
-	go func() {
-		log.Tracef("flusher %v", sc.QueueDepth)
-		defer log.Tracef("flusher %v exit", sc.QueueDepth)
-
-		// Create network encoder
-		enc := gob.NewEncoder(channel)
-		for {
-			select {
-			case m := <-measurements:
-				log.Tracef("flusher %v", len(measurements))
-				err := enc.Encode(*m)
-				if err != nil {
-					log.Errorf("flusher encode error: %v",
-						err)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	// XXX if we are already taking measurements we should fail
+	p.measurements = make(chan *types.PCCollection, sc.QueueDepth)
+	select {
+	case p.reload <- struct{}{}:
+	default:
+		panic("should not happen")
+	}
 
 	t := time.Tick(sc.Frequency) // Replace this with an elapsed time counter
 	for {
 		select {
 		case <-t:
-		case <-ctx.Done():
-			return
+			//case <-ctx.Done():
+			//	return
 		}
 		log.Tracef("startCollection: tick")
 
@@ -141,13 +246,14 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 
 			// Spill last measurement if queue depth is reached
 			select {
-			case measurements <- &m:
+			case p.measurements <- &m:
+				log.Tracef("startCollection: recording %v",
+					filenames[k])
 			default:
 				log.Tracef("startCollection: spill %v",
-					len(measurements))
+					len(p.measurements))
 			}
 		}
-
 	}
 }
 
@@ -179,8 +285,7 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 	}
 
 	// XXX handle already running collection
-
-	go p.startCollection(ctx, sc, channel)
+	go p.startCollection(ctx, sc)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -224,6 +329,8 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 			continue
 		}
 
+		log.Tracef("oobHandler %v", spew.Sdump(cmd))
+
 		var (
 			cmdId string
 			reply []byte
@@ -242,6 +349,15 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 				" cmd %v error %v", cmd.Version, cmd.Tag,
 				cmd.Cmd, e.Error)
 			continue
+
+		case types.PCRegisterStream:
+			reply, err = p.handleRegisterStream(cmd, channel)
+			if err != nil {
+				log.Errorf("oobHandler handleRegisterStream:"+
+					" %v", err)
+				continue
+			}
+			cmdId = types.PCCmd
 
 		case types.PCCollectOnceCmd:
 			reply, err = p.handleOnce(cmd)
@@ -376,6 +492,8 @@ func _main() error {
 	pc := &PerfCollector{
 		cfg:         loadedCfg,
 		allowedKeys: make(map[string]struct{}),
+		encoder:     make(chan *gob.Encoder),
+		reload:      make(chan struct{}),
 	}
 	for _, v := range pc.cfg.AllowedKeys {
 		pc.allowedKeys[v] = struct{}{}
@@ -395,6 +513,9 @@ func _main() error {
 	if err != nil {
 		return err
 	}
+
+	// Prepare network flusher
+	go pc.networkFlusher()
 
 	// Listen for incoming SSH connections.
 	listenC := make(chan error)

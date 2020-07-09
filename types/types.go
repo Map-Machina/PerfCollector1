@@ -16,6 +16,7 @@ const (
 	PCCollectOnceCmd      = "collectonce"
 	PCCollectOnceReplyCmd = "collectoncereply"
 	PCStartCollectionCmd  = "startcollection"
+	PCRegisterStream      = "registerstream"
 
 	PCChannel = "collector" // SSH channel name
 )

@@ -27,12 +27,6 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 	log.Tracef("send")
 	defer log.Tracef("send exit")
 
-	// Do expensive encode first
-	reply, err := types.Encode(cmd)
-	if err != nil {
-		return nil
-	}
-
 	// Hnadle tag
 	p.Lock()
 	tag := p.tag
@@ -44,11 +38,18 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 	p.tag++
 	p.Unlock()
 
-	log.Tracef("send %v", tag)
-
 	// Send OOB
 	cmd.Version = types.PCVersion // Set version
 	cmd.Tag = tag                 // Set tag
+
+	// Do expensive encode first
+	reply, err := types.Encode(cmd)
+	if err != nil {
+		return nil
+	}
+
+	log.Tracef("send %v", spew.Sdump(cmd))
+
 	_, err = channel.SendRequest(types.PCCmd, false, reply)
 
 	return err
@@ -224,19 +225,25 @@ func _main() error {
 	//	return err
 	//}
 	//spew.Dump(reply)
-	log.Infof("sendAndWait")
-	reply, err := pc.sendAndWait(channel, types.PCCommand{
+	// Register this connection as the flusher
+	_, err = pc.sendAndWait(channel, types.PCCommand{
+		Cmd: types.PCRegisterStream,
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = pc.sendAndWait(channel, types.PCCommand{
 		Cmd: types.PCStartCollectionCmd,
 		Payload: types.PCStartCollection{
 			Frequency:  5 * time.Second,
-			QueueDepth: 10000,
+			QueueDepth: 3, //10000,
 			Systems:    []string{"stat", "meminfo"},
 		},
 	})
 	if err != nil {
 		return err
 	}
-	_ = reply
 
 	// Setup streaming
 	_, err = channel.Write([]byte("Hello world from client\n"))

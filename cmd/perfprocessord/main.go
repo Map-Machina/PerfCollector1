@@ -152,6 +152,16 @@ func (p *PerfCtl) oobHandler(cancel context.CancelFunc, channel ssh.Channel, req
 				log.Errorf("type assertion error %T", cmd.Payload)
 			}
 
+		case types.PCStatusCollectionCmd:
+			s, ok := cmd.Payload.(types.PCStatusCollectionReply)
+			if ok {
+				reply = s
+				spew.Dump(reply)
+			} else {
+				// Should not happen
+				log.Errorf("type assertion error %T", cmd.Payload)
+			}
+
 		default:
 			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
 			reply := types.PCCommand{
@@ -181,6 +191,14 @@ func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []st
 	}
 
 	switch args[0] {
+	case "status":
+		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
+			Cmd: types.PCStatusCollectionCmd,
+		})
+		if err != nil {
+			return err
+		}
+
 	case "start":
 		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
 			Cmd: types.PCStartCollectionCmd,

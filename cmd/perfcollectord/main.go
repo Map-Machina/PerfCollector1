@@ -25,8 +25,12 @@ type PerfCollector struct {
 	newMeasurements  chan chan *types.PCCollection // New measurements channel
 	streamRegistered bool
 
+	// Sink status channels
+	sinkStatus  chan struct{}
+	sinkStatusR chan *types.PCSinkStatus
+
 	stopCollection    chan struct{} // collection stop channel
-	collectionEnabled bool
+	collectionEnabled *types.PCStartCollection
 
 	cfg *config
 
@@ -55,16 +59,30 @@ func (p *PerfCollector) getStreamRegistered() bool {
 	return p.streamRegistered
 }
 
-func (p *PerfCollector) setCollectionEnabled(s bool) {
+func (p *PerfCollector) setCollectionEnabled(sc *types.PCStartCollection) {
 	p.Lock()
-	p.collectionEnabled = s
+	if sc == nil {
+		p.collectionEnabled = nil
+	} else {
+
+		// Save copy
+		s := *sc
+		p.collectionEnabled = &s
+	}
 	p.Unlock()
 }
 
-func (p *PerfCollector) getCollectionEnabled() bool {
+func (p *PerfCollector) getCollectionEnabled() *types.PCStartCollection {
 	p.Lock()
 	defer p.Unlock()
-	return p.collectionEnabled
+
+	if p.collectionEnabled == nil {
+		return nil
+	}
+
+	// Return copy
+	sc := *p.collectionEnabled
+	return &sc
 }
 
 func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -93,6 +111,21 @@ func (p *PerfCollector) sink() {
 		encoder      *gob.Encoder
 		measurements chan *types.PCCollection
 	)
+
+	// sinkStatus is a closure that signals the sink status.
+	sinkStatus := func() {
+		currentDepth := 0
+		if measurements != nil {
+			currentDepth = len(measurements)
+		}
+		p.sinkStatusR <- &types.PCSinkStatus{
+			QueueUsed:          currentDepth,
+			SinkEnabled:        encoder != nil,
+			MeasurementEnabled: measurements != nil,
+		}
+
+	}
+
 	for {
 		select {
 		case e, ok := <-p.newEncoder:
@@ -109,6 +142,12 @@ func (p *PerfCollector) sink() {
 			}
 			measurements = mc
 			continue
+
+		case _, ok := <-p.sinkStatus:
+			if !ok {
+				return
+			}
+			sinkStatus()
 
 		case m, ok := <-measurements:
 			if !ok {
@@ -132,6 +171,12 @@ func (p *PerfCollector) sink() {
 							return
 						}
 						measurements = mc
+						continue
+					case _, ok := <-p.sinkStatus:
+						if !ok {
+							return
+						}
+						sinkStatus()
 						continue
 					}
 				}
@@ -235,7 +280,7 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 		panic("should not happen")
 	}
 
-	p.setCollectionEnabled(true)
+	p.setCollectionEnabled(&sc)
 
 	t := time.Tick(sc.Frequency) // XXX Replace this with an elapsed time counter
 	for {
@@ -276,6 +321,41 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 	}
 }
 
+func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleStatusCollection %v", cmd.Cmd)
+	defer log.Tracef("handleStatusCollection %v exit", cmd.Cmd)
+
+	if cmd.Payload != nil {
+		return protocolError(cmd.Tag, "invalid status collector payload")
+	}
+
+	sc := p.getCollectionEnabled()
+	if sc == nil {
+		// No collection running.
+		sc = &types.PCStartCollection{}
+	}
+
+	select {
+	case p.sinkStatus <- struct{}{}:
+	default:
+		panic("shouldn't happen")
+	}
+	sinkStatus := <-p.sinkStatusR
+
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCStatusCollectionCmd,
+		Payload: types.PCStatusCollectionReply{
+			Frequency:  sc.Frequency,
+			Systems:    sc.Systems,
+			QueueDepth: sc.QueueDepth,
+			SinkStatus: *sinkStatus,
+		},
+	}
+	return types.Encode(reply)
+}
+
 func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
 	log.Tracef("handleStartCollection %v", cmd.Cmd)
 	defer log.Tracef("handleStartCollection %v exit", cmd.Cmd)
@@ -300,7 +380,7 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 	}
 
 	// Only allow one collection to run.
-	if p.getCollectionEnabled() {
+	if p.getCollectionEnabled() != nil {
 		return protocolError(cmd.Tag, "collector already running")
 	}
 
@@ -325,7 +405,7 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 	}
 
 	// Return error if collection isn't running.
-	if !p.getCollectionEnabled() {
+	if p.getCollectionEnabled() == nil {
 		return protocolError(cmd.Tag, "collector not running")
 	}
 
@@ -335,7 +415,7 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 		panic("should not happen")
 	}
 	close(p.stopCollection)
-	p.setCollectionEnabled(false)
+	p.setCollectionEnabled(nil)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -407,6 +487,9 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 
 		case types.PCCollectOnceCmd:
 			reply, err = p.handleOnce(cmd)
+
+		case types.PCStatusCollectionCmd:
+			reply, err = p.handleStatusCollection(ctx, cmd, channel)
 
 		case types.PCStartCollectionCmd:
 			reply, err = p.handleStartCollection(ctx, cmd, channel)
@@ -533,6 +616,8 @@ func _main() error {
 		allowedKeys:     make(map[string]struct{}),
 		newEncoder:      make(chan *gob.Encoder),
 		newMeasurements: make(chan chan *types.PCCollection),
+		sinkStatus:      make(chan struct{}),
+		sinkStatusR:     make(chan *types.PCSinkStatus),
 	}
 	for _, v := range pc.cfg.AllowedKeys {
 		pc.allowedKeys[v] = struct{}{}

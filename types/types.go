@@ -15,6 +15,7 @@ const (
 	PCErrorCmd            = "error"            // Error reply to a command
 	PCCollectOnceCmd      = "collectonce"      // Collect one measurement
 	PCCollectOnceReplyCmd = "collectoncereply" // Reply to collect once
+	PCStatusCollectionCmd = "statuscollection" // Collection status
 	PCStartCollectionCmd  = "startcollection"  // Start collecting measurements
 	PCStopCollectionCmd   = "stopcollection"   // Stop collecting measurements
 	PCRegisterSink        = "registersink"     // Register a sink
@@ -53,10 +54,18 @@ type PCStartCollection struct {
 	QueueDepth int           // Max measurements before spilling
 }
 
-// PCStatus is the status of the collection.
-type PCCollectionStatus struct {
-	Frequency time.Time // Frequency of the collection
-	Systems   []string  // Systems that are being polled
+type PCSinkStatus struct {
+	QueueUsed          int  // Number of items on the queue
+	SinkEnabled        bool // Is the sink enabled
+	MeasurementEnabled bool // Are measurements enabled
+}
+
+// PCStatusCollectionReply is the status of the collection.
+type PCStatusCollectionReply struct {
+	Frequency  time.Duration // Frequency of the collection
+	Systems    []string      // Systems that are being polled
+	QueueDepth int           // Max measurements before spilling
+	SinkStatus PCSinkStatus  // Sink status
 }
 
 // PCCollection is a raw measurement that is sunk into the network.
@@ -97,5 +106,5 @@ func init() {
 	gob.Register(PCCollectOnce{})
 	gob.Register(PCCollectOnceReply{})
 	gob.Register(PCStartCollection{})
-	gob.Register(PCCollectionStatus{})
+	gob.Register(PCStatusCollectionReply{})
 }

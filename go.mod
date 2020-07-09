@@ -1,4 +1,4 @@
-module github.com/businessperformancetuning/sizer
+module github.com/businessperformancetuning/perfcollector
 
 go 1.14
 

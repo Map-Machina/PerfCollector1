@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/businessperformancetuning/sizer/parser"
-	"github.com/businessperformancetuning/sizer/types"
-	"github.com/businessperformancetuning/sizer/util"
+	"github.com/businessperformancetuning/perfcollector/parser"
+	"github.com/businessperformancetuning/perfcollector/types"
+	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ssh"
 )

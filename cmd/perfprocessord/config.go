@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/businessperformancetuning/sizer/cmd/perfcollectord/sharedconfig"
-	"github.com/businessperformancetuning/sizer/util"
+	"github.com/businessperformancetuning/perfcollector/cmd/perfcollectord/sharedconfig"
+	"github.com/businessperformancetuning/perfcollector/util"
 	flags "github.com/jessevdk/go-flags"
 )
 

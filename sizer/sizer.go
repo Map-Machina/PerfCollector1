@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/businessperformancetuning/sizer/types"
+	"github.com/businessperformancetuning/perfcollector/types"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/prometheus/procfs"
 	"golang.org/x/crypto/ssh"

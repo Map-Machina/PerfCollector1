@@ -53,11 +53,6 @@ type PCStartCollection struct {
 	QueueDepth int           // Max measurements before spilling
 }
 
-// PCStopCollectionCmd instructs the collector to stop collecting measurements.
-type PCStopCollection struct {
-	Destroy bool // When set the uncollected measurements will be discarded
-}
-
 // PCStatus is the status of the collection.
 type PCCollectionStatus struct {
 	Frequency time.Time // Frequency of the collection
@@ -102,6 +97,5 @@ func init() {
 	gob.Register(PCCollectOnce{})
 	gob.Register(PCCollectOnceReply{})
 	gob.Register(PCStartCollection{})
-	gob.Register(PCStopCollection{})
 	gob.Register(PCCollectionStatus{})
 }

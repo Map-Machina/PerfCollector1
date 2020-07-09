@@ -198,8 +198,7 @@ func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []st
 
 	case "stop":
 		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
-			Cmd:     types.PCStopCollectionCmd,
-			Payload: types.PCStopCollection{},
+			Cmd: types.PCStopCollectionCmd,
 		})
 		if err != nil {
 			return err

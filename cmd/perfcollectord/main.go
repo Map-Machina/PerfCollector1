@@ -320,10 +320,8 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 	log.Tracef("handleStopCollection %v", cmd.Cmd)
 	defer log.Tracef("handleStopCollection %v exit", cmd.Cmd)
 
-	sc, ok := cmd.Payload.(types.PCStopCollection)
-	if !ok {
-		return protocolError(cmd.Tag, "command type "+
-			"assertion error %v, %T", cmd.Cmd, sc)
+	if cmd.Payload != nil {
+		return protocolError(cmd.Tag, "invalid stop collector payload")
 	}
 
 	// Return error if collection isn't running.

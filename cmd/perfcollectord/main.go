@@ -21,9 +21,9 @@ import (
 
 type PerfCollector struct {
 	sync.Mutex
-	newEncoder       chan *gob.Encoder             // New sink encoder
-	newMeasurements  chan chan *types.PCCollection // New measurements channel
-	streamRegistered bool
+	newEncoder      chan *gob.Encoder             // New sink encoder
+	newMeasurements chan chan *types.PCCollection // New measurements channel
+	sinkRegistered  bool
 
 	// Sink status channels
 	sinkStatus  chan struct{}
@@ -47,16 +47,16 @@ func protocolError(tag uint, format string, args ...interface{}) ([]byte, error)
 	})
 }
 
-func (p *PerfCollector) setStreamRegistered(s bool) {
+func (p *PerfCollector) setSinkRegistered(s bool) {
 	p.Lock()
-	p.streamRegistered = s
+	p.sinkRegistered = s
 	p.Unlock()
 }
 
-func (p *PerfCollector) getStreamRegistered() bool {
+func (p *PerfCollector) getSinkRegistered() bool {
 	p.Lock()
 	defer p.Unlock()
-	return p.streamRegistered
+	return p.sinkRegistered
 }
 
 func (p *PerfCollector) setCollectionEnabled(sc *types.PCStartCollection) {
@@ -126,14 +126,18 @@ func (p *PerfCollector) sink() {
 
 	}
 
+	newEncoder := func(e *gob.Encoder) {
+		encoder = e
+		p.setSinkRegistered(e != nil)
+	}
+
 	for {
 		select {
 		case e, ok := <-p.newEncoder:
 			if !ok {
 				return
 			}
-			encoder = e
-			p.setStreamRegistered(true)
+			newEncoder(e)
 			continue
 
 		case mc, ok := <-p.newMeasurements:
@@ -159,13 +163,13 @@ func (p *PerfCollector) sink() {
 				// If there is no encoder wait for a new one to
 				// appear.
 				if encoder == nil {
-					p.setStreamRegistered(false)
+					p.setSinkRegistered(false)
 					select {
 					case e, ok := <-p.newEncoder:
 						if !ok {
 							return
 						}
-						encoder = e
+						newEncoder(e)
 					case mc, ok := <-p.newMeasurements:
 						if !ok {
 							return
@@ -215,9 +219,9 @@ func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Chan
 	log.Tracef("handleRegisterSink %v", cmd.Tag)
 	defer log.Tracef("handleRegisterSink %v exit", cmd.Tag)
 
-	// Register stream
-	if p.getStreamRegistered() {
-		return protocolError(cmd.Tag, "stream already registered")
+	// Register sink
+	if p.getSinkRegistered() {
+		return protocolError(cmd.Tag, "sink already registered")
 	}
 	select {
 	case p.newEncoder <- gob.NewEncoder(channel):
@@ -547,6 +551,10 @@ func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn,
 
 	go p.oobHandler(ctx, channel, requests)
 
+	// XXX if a sink was registered in this session we need to signal the
+	// sink function that the encoder has become nil.
+	// This bug happens when you rehister a sink. Close it. Register again.
+	// This will result in a sink already registered error.
 	for {
 		defer channel.Close()
 		r := bufio.NewReader(channel)

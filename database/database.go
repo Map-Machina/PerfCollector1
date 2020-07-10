@@ -163,7 +163,7 @@ INSERT INTO version (Version) VALUES (1);
 CREATE TABLE meminfo (
 	memid			BIGINT,
 	timestamp		TIMESTAMP,
-	duration		INTERVAL,
+	duration		BIGINT,
 
 	memtotal		BIGINT,
 	memfree			BIGINT,

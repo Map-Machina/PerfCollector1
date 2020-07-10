@@ -28,12 +28,12 @@ var (
 // identifiers and collection data. We use anonymous structures in order to
 // minimize code churn.
 type Meminfo2 struct {
-	MemInfoIdetifiers
+	MeminfoIdentifiers
 	Collection
 	parser.Meminfo
 }
 
-type MemInfoIdetifiers struct {
+type MeminfoIdentifiers struct {
 	MemId uint
 }
 

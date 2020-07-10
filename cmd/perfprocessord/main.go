@@ -341,7 +341,7 @@ func _main() error {
 
 			// stuff in db
 			ss := database.Meminfo2{
-				database.MemInfoIdetifiers{
+				database.MeminfoIdentifiers{
 					12,
 				},
 				database.Collection{

@@ -52,7 +52,6 @@ type config struct {
 	Version     string
 	SSHKeyFile  string   `long:"sshid" description:"File containing the ssh identity"`
 	AllowedKeys []string `long:"allowedkeys" description:"Allowed SSH fingerprints)"`
-	User        string   `long:"user" description:"SSH user name"`
 }
 
 // serviceOptions defines the configuration options for the rpc as a service
@@ -376,11 +375,6 @@ func loadConfig() (*config, []string, error) {
 			fmt.Fprintln(os.Stderr, usageMessage)
 			return nil, nil, err
 		}
-	}
-
-	// User name
-	if cfg.User == "" {
-		return nil, nil, fmt.Errorf("user must be set")
 	}
 
 	// Add the default listener if none were specified. The default

@@ -337,7 +337,23 @@ func _main() error {
 				log.Errorf("could not process meminfo: %v", err)
 				continue
 			}
-			spew.Dump(s)
+			//spew.Dump(s)
+
+			// stuff in db
+			ss := database.Meminfo2{
+				database.MemInfoIdetifiers{
+					12,
+				},
+				database.Collection{
+					Timestamp: m.Timestamp,
+					Duration:  m.Duration,
+				},
+				s,
+			}
+			err = pc.db.MeminfoInsert(&ss)
+			if err != nil {
+				log.Errorf("sink MeminfoInsert: %v", err)
+			}
 		default:
 			log.Errorf("unknown system: %v", m.System)
 		}

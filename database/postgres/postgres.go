@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/businessperformancetuning/perfcollector/database"
-	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -70,14 +69,11 @@ func (p *postgres) Create() error {
 	return nil
 }
 
-func (p *postgres) MeminfoInsert(mi *parser.Meminfo) error {
-	log.Tracef("postgres.UserInsert")
+func (p *postgres) MeminfoInsert(mi *database.Meminfo2) error {
+	log.Tracef("postgres.MeminfoInsert")
 
-	//if _, err := p.db.NamedExec(database.UserInsert, u); err != nil {
-	//	return err
-	//}
-
-	return fmt.Errorf("not yet")
+	_, err := p.db.NamedExec(database.InsertMeminfo2, mi)
+	return err
 }
 
 func New(uri string) (*postgres, error) {

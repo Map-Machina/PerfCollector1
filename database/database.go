@@ -1,13 +1,17 @@
 package database
 
-import "github.com/businessperformancetuning/perfcollector/parser"
+import (
+	"time"
+
+	"github.com/businessperformancetuning/perfcollector/parser"
+)
 
 type Database interface {
 	Create() error // Create schema. Database is NOT Opened!
 	Open() error   // Open database connection and create+upgrade schema
 	Close() error  // Close database
 
-	MeminfoInsert(*parser.Meminfo) error // Insert Meminfo into the database
+	MeminfoInsert(*Meminfo2) error // Insert Meminfo into the database
 }
 
 const (
@@ -18,7 +22,136 @@ const (
 var (
 	Create        = "CREATE DATABASE " + Name + ";"
 	SelectVersion = "SELECT * FROM version LIMIT 1;"
-	MeminfoInsert = "INSERT INTO users (Id, Email, Password, Admin) VALUES (:id, :email, :password, :admin);"
+)
+
+// MemInfo2 is a structure that prefixes the parser.MemInfo with the database
+// identifiers and collection data. We use anonymous structures in order to
+// minimize code churn.
+type Meminfo2 struct {
+	MemInfoIdetifiers
+	Collection
+	parser.Meminfo
+}
+
+type MemInfoIdetifiers struct {
+	MemId uint
+}
+
+type Collection struct {
+	Timestamp time.Time     // Time of collection
+	Duration  time.Duration // Time collection took
+}
+
+// InsertMeminfo inserts a memory info record into the database.
+var (
+	InsertMeminfo2 = `
+INSERT INTO meminfo (
+	memid,
+	timestamp,
+	duration,
+
+	memtotal,
+	memfree,
+	memavailable,
+	buffers,
+	cached,
+	swapcached,
+	active,
+	inactive,
+	activeanon,
+	inactiveanon,
+	activefile,
+	inactivefile,
+	unevictable,
+	mlocked,
+	swaptotal,
+	swapfree,
+	dirty,
+	writeback,
+	anonpages,
+	mapped,
+	shmem,
+	slab,
+	sreclaimable,
+	sunreclaim,
+	kernelstack,
+	pagetables,
+	nfsunstable,
+	bounce,
+	writebacktmp,
+	commitlimit,
+	committedas,
+	vmalloctotal,
+	vmallocused,
+	vmallocchunk,
+	hardwarecorrupted,
+	anonhugepages,
+	shmemhugepages,
+	shmempmdmapped,
+	cmatotal,
+	cmafree,
+	hugepagestotal,
+	hugepagesfree,
+	hugepagesrsvd,
+	hugepagessurp,
+	hugepagesize,
+	directmap4k,
+	directmap2m,
+	directmap1g)
+VALUES(
+	:memid,
+	:timestamp,
+	:duration,
+
+	:memtotal,
+	:memfree,
+	:memavailable,
+	:buffers,
+	:cached,
+	:swapcached,
+	:active,
+	:inactive,
+	:activeanon,
+	:inactiveanon,
+	:activefile,
+	:inactivefile,
+	:unevictable,
+	:mlocked,
+	:swaptotal,
+	:swapfree,
+	:dirty,
+	:writeback,
+	:anonpages,
+	:mapped,
+	:shmem,
+	:slab,
+	:sreclaimable,
+	:sunreclaim,
+	:kernelstack,
+	:pagetables,
+	:nfsunstable,
+	:bounce,
+	:writebacktmp,
+	:commitlimit,
+	:committedas,
+	:vmalloctotal,
+	:vmallocused,
+	:vmallocchunk,
+	:hardwarecorrupted,
+	:anonhugepages,
+	:shmemhugepages,
+	:shmempmdmapped,
+	:cmatotal,
+	:cmafree,
+	:hugepagestotal,
+	:hugepagesfree,
+	:hugepagesrsvd,
+	:hugepagessurp,
+	:hugepagesize,
+	:directmap4k,
+	:directmap2m,
+	:directmap1g);
+`
 )
 
 var (
@@ -28,53 +161,57 @@ CREATE TABLE version (Version int);
 INSERT INTO version (Version) VALUES (1);
 `, `
 CREATE TABLE meminfo (
-	mem_total		BIGINT,
-	mem_free		BIGINT,
-	mem_available		BIGINT,
+	memid			BIGINT,
+	timestamp		TIMESTAMP,
+	duration		INTERVAL,
+
+	memtotal		BIGINT,
+	memfree			BIGINT,
+	memavailable		BIGINT,
 	buffers			BIGINT,
 	cached			BIGINT,
-	swap_cached		BIGINT,
+	swapcached		BIGINT,
 	active			BIGINT,
 	inactive		BIGINT,
-	active_anon		BIGINT,
-	inactive_anon		BIGINT,
-	active_file		BIGINT,
-	inactive_file		BIGINT,
+	activeanon		BIGINT,
+	inactiveanon		BIGINT,
+	activefile		BIGINT,
+	inactivefile		BIGINT,
 	unevictable		BIGINT,
 	mlocked			BIGINT,
-	swap_total		BIGINT,
-	swap_free		BIGINT,
+	swaptotal		BIGINT,
+	swapfree		BIGINT,
 	dirty			BIGINT,
-	write_back		BIGINT,
-	anon_pages		BIGINT,
+	writeback		BIGINT,
+	anonpages		BIGINT,
 	mapped			BIGINT,
 	shmem			BIGINT,
 	slab			BIGINT,
 	sreclaimable		BIGINT,
 	sunreclaim		BIGINT,
-	Kernel_stack		BIGINT,
-	page_tables		BIGINT,
-	nfs_unstable		BIGINT,
+	kernelstack		BIGINT,
+	pagetables		BIGINT,
+	nfsunstable		BIGINT,
 	bounce			BIGINT,
-	write_back_tmp		BIGINT,
-	commit_limit		BIGINT,
-	commit_as		BIGINT,
-	vmalloc_total		BIGINT,
-	vmalloc_used		BIGINT,
-	vmalloc_chunk		BIGINT,
-	hardware_corrupted	BIGINT,
-	anon_huge_pages		BIGINT,
-	shmem_huge_pages	BIGINT,
-	shmem_pmd_mapped	BIGINT,
-	cma_total		BIGINT,
-	cma_free		BIGINT,
-	huge_pages_total	BIGINT,
-	huge_pages_free		BIGINT,
-	huge_pages_rsvd		BIGINT,
-	huge_pages_surp		BIGINT,
-	huge_pages_size		BIGINT,
-	direct_map_4k		BIGINT,
-	direct_map_2m		BIGINT,
-	direct_map_1g		BIGINT);
+	writebacktmp		BIGINT,
+	commitlimit		BIGINT,
+	committedas		BIGINT,
+	vmalloctotal		BIGINT,
+	vmallocused		BIGINT,
+	vmallocchunk		BIGINT,
+	hardwarecorrupted	BIGINT,
+	anonhugepages		BIGINT,
+	shmemhugepages		BIGINT,
+	shmempmdmapped		BIGINT,
+	cmatotal		BIGINT,
+	cmafree			BIGINT,
+	hugepagestotal		BIGINT,
+	hugepagesfree		BIGINT,
+	hugepagesrsvd		BIGINT,
+	hugepagessurp		BIGINT,
+	hugepagesize		BIGINT,
+	directmap4k		BIGINT,
+	directmap2m		BIGINT,
+	directmap1g		BIGINT);
 `}
 )

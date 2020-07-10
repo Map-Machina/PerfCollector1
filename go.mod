@@ -9,7 +9,9 @@ require (
 	github.com/decred/slog v1.0.0
 	github.com/gliderlabs/ssh v0.3.0
 	github.com/jessevdk/go-flags v1.4.0
+	github.com/jmoiron/sqlx v1.2.0
 	github.com/jrick/logrotate v1.0.0
+	github.com/lib/pq v1.7.0
 	github.com/prometheus/common v0.10.0
 	github.com/prometheus/procfs v0.1.3
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9

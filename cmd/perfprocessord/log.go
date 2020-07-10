@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/decred/slog"
 	"github.com/jrick/logrotate/rotator"
 )
@@ -44,17 +45,19 @@ var (
 	// application shutdown.
 	logRotator *rotator.Rotator
 
-	log = backendLog.Logger("PPRD")
+	log   = backendLog.Logger("PPRD")
+	dbLog = backendLog.Logger("PPDB")
 )
 
 // Initialize package-global logger variables.
 func init() {
-	//collector.UseLogger(collLog)
+	postgres.UseLogger(dbLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
 var subsystemLoggers = map[string]slog.Logger{
 	"PPRD": log,
+	"PPDB": dbLog,
 }
 
 // initLogRotator initializes the logging rotator to write logs to logFile and

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfcollectord/sharedconfig"
+	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/util"
 	flags "github.com/jessevdk/go-flags"
 )
@@ -49,8 +50,12 @@ type config struct {
 	DebugLevel  string `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
 	Version     string
 	SSHKeyFile  string `long:"sshid" description:"File containing the ssh identity"`
-	User        string `long:"user" description:"SSH user name"`
 	Host        string `long:"host" description:"SSH host"`
+
+	// Database
+	DBURI    string `long:"dburi" description:"Database URI"`
+	DB       string `long:"db" description:"Database type -- supported types: postgres"`
+	DBCreate bool   `long:"dbcreate" description:"Create database and exit, requires db and admin credentials on dburi"`
 }
 
 // serviceOptions defines the configuration options for the rpc as a service
@@ -376,9 +381,41 @@ func loadConfig() (*config, []string, error) {
 		}
 	}
 
-	// User name
-	if cfg.User == "" {
-		return nil, nil, fmt.Errorf("user must be set")
+	// We only need db commands if we are in sink mode.
+	if cfg.DBURI == "" && len(remainingArgs) > 1 &&
+		remainingArgs[0] == "sink" {
+		err := fmt.Errorf("%s: must provide database URI",
+			funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+	if cfg.DBCreate {
+		switch cfg.DB {
+		case "postgres":
+			db, err := postgres.New(cfg.DBURI)
+			if err != nil {
+				err := fmt.Errorf("%s: %v", funcName, err)
+				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, usageMessage)
+				return nil, nil, err
+			}
+			if err := db.Create(); err != nil {
+				err := fmt.Errorf("%s: %v", funcName, err)
+				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, usageMessage)
+				return nil, nil, err
+			}
+		default:
+			err := fmt.Errorf("%s: invalid database type %v",
+				funcName, cfg.DB)
+			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, usageMessage)
+			return nil, nil, err
+		}
+
+		// Always exit.
+		os.Exit(0)
 	}
 
 	// Warn about missing config file only after all other configuration is

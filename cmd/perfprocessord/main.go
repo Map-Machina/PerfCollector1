@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/businessperformancetuning/perfcollector/database"
+	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/businessperformancetuning/perfcollector/types"
 	"github.com/businessperformancetuning/perfcollector/util"
@@ -19,6 +21,8 @@ type PerfCtl struct {
 	sync.RWMutex
 
 	cfg *config
+
+	db database.Database
 
 	tag  uint                      // Last used tag
 	tags map[uint]chan interface{} // Tag callback
@@ -246,18 +250,17 @@ func _main() error {
 		tags: make(map[uint]chan interface{}),
 	}
 
-	log.Debugf("Version      : %v", version())
-	log.Debugf("Home dir     : %v", pc.cfg.HomeDir)
+	log.Infof("Version         : %v", version())
+	log.Infof("Home dir        : %v", pc.cfg.HomeDir)
 
 	pk, err := util.PublicKeyFile(pc.cfg.SSHKeyFile)
 	if err != nil {
 		return err
 	}
 	config := &ssh.ClientConfig{
-		User: pc.cfg.User,
 		Auth: []ssh.AuthMethod{pk},
 		//HostKeyCallback: ssh.FixedHostKey(hostKey),
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // XXX security issue
 	}
 
 	// Connect to ssh server
@@ -281,6 +284,26 @@ func _main() error {
 	if len(args) > 0 && args[0] != "sink" {
 		return pc.handleArgs(ctx, channel, args)
 	}
+
+	// Prepare database
+	switch pc.cfg.DB {
+	case "postgres":
+		postgres.UseLogger(dbLog)
+		pc.db, err = postgres.New(pc.cfg.DBURI)
+	default:
+		return fmt.Errorf("Invalid database type: %v", pc.cfg.DB)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Open and Close db on exit.
+	if err := pc.db.Open(); err != nil {
+		return err
+	}
+	defer pc.db.Close()
+
+	log.Infof("Database version: %v", database.Version)
 
 	// Register sink.
 	_, err = pc.sendAndWait(ctx, channel, types.PCCommand{

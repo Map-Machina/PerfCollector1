@@ -9,7 +9,8 @@ import (
 )
 
 type postgres struct {
-	db *sqlx.DB
+	db   *sqlx.DB
+	name string
 }
 
 var _ database.Database = (*postgres)(nil)
@@ -60,13 +61,30 @@ func (p *postgres) Create() error {
 	}
 	defer p.Close()
 
-	log.Infof("Creating database: %v", database.Name)
-	if _, err := p.db.Exec(database.Create); err != nil {
+	log.Infof("Creating database: %v", p.name)
+	if _, err := p.db.Exec(fmt.Sprintf(database.CreateFormat, p.name)); err != nil {
 		return err
 	}
 	log.Infof("Database version created: %v", database.Version)
 
 	return nil
+}
+
+func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) {
+	log.Tracef("postgres.MeasurementsInsert")
+
+	rows, err := p.db.NamedQuery(database.InsertMeasurements, m)
+	if err != nil {
+		return 0, err
+	}
+	var runId uint64
+	if rows.Next() {
+		err = rows.Scan(&runId)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return runId, nil
 }
 
 func (p *postgres) MeminfoInsert(mi *database.Meminfo2) error {
@@ -76,12 +94,12 @@ func (p *postgres) MeminfoInsert(mi *database.Meminfo2) error {
 	return err
 }
 
-func New(uri string) (*postgres, error) {
+func New(name, uri string) (*postgres, error) {
 	log.Tracef("postgres.New")
 
 	db, err := sqlx.Open("postgres", uri)
 	if err != nil {
 		return nil, err
 	}
-	return &postgres{db: db}, nil
+	return &postgres{db: db, name: name}, nil
 }

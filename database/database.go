@@ -2,14 +2,15 @@ package database
 
 import (
 	"time"
-
-	"github.com/businessperformancetuning/perfcollector/parser"
 )
 
 type Database interface {
 	Create() error // Create schema. Database is NOT Opened!
 	Open() error   // Open database connection and create+upgrade schema
 	Close() error  // Close database
+
+	// Insert measurement and return fresh run id
+	MeasurementsInsert(*Measurements) (uint64, error)
 
 	MeminfoInsert(*Meminfo2) error // Insert Meminfo into the database
 }
@@ -20,139 +21,38 @@ const (
 )
 
 var (
-	Create        = "CREATE DATABASE " + Name + ";"
+	CreateFormat  = "CREATE DATABASE %v;"
 	SelectVersion = "SELECT * FROM version LIMIT 1;"
 )
 
-// MemInfo2 is a structure that prefixes the parser.MemInfo with the database
-// identifiers and collection data. We use anonymous structures in order to
-// minimize code churn.
-type Meminfo2 struct {
-	MeminfoIdentifiers
-	Collection
-	parser.Meminfo
+// Measurements is a lookup table that joins site, host and run identifiers so
+// that the measurements can be reconstituted.
+type Measurements struct {
+	RunID  uint64 // Run identifier
+	SiteID uint64 // Site identifier
+	HostID uint64 // Host Identifier
 }
 
-type MeminfoIdentifiers struct {
-	MemId uint
-}
+var (
+	InsertMeasurements = `
+INSERT INTO measurements (
+	siteid,
+	hostid
+)
+VALUES(
+	:siteid,
+	:hostid
+)
+RETURNING runid;
+`
+)
 
+// Collection is prefixed after identifiers on every measurement that is being
+// stored.
 type Collection struct {
 	Timestamp time.Time     // Time of collection
 	Duration  time.Duration // Time collection took
 }
-
-// InsertMeminfo inserts a memory info record into the database.
-var (
-	InsertMeminfo2 = `
-INSERT INTO meminfo (
-	memid,
-	timestamp,
-	duration,
-
-	memtotal,
-	memfree,
-	memavailable,
-	buffers,
-	cached,
-	swapcached,
-	active,
-	inactive,
-	activeanon,
-	inactiveanon,
-	activefile,
-	inactivefile,
-	unevictable,
-	mlocked,
-	swaptotal,
-	swapfree,
-	dirty,
-	writeback,
-	anonpages,
-	mapped,
-	shmem,
-	slab,
-	sreclaimable,
-	sunreclaim,
-	kernelstack,
-	pagetables,
-	nfsunstable,
-	bounce,
-	writebacktmp,
-	commitlimit,
-	committedas,
-	vmalloctotal,
-	vmallocused,
-	vmallocchunk,
-	hardwarecorrupted,
-	anonhugepages,
-	shmemhugepages,
-	shmempmdmapped,
-	cmatotal,
-	cmafree,
-	hugepagestotal,
-	hugepagesfree,
-	hugepagesrsvd,
-	hugepagessurp,
-	hugepagesize,
-	directmap4k,
-	directmap2m,
-	directmap1g)
-VALUES(
-	:memid,
-	:timestamp,
-	:duration,
-
-	:memtotal,
-	:memfree,
-	:memavailable,
-	:buffers,
-	:cached,
-	:swapcached,
-	:active,
-	:inactive,
-	:activeanon,
-	:inactiveanon,
-	:activefile,
-	:inactivefile,
-	:unevictable,
-	:mlocked,
-	:swaptotal,
-	:swapfree,
-	:dirty,
-	:writeback,
-	:anonpages,
-	:mapped,
-	:shmem,
-	:slab,
-	:sreclaimable,
-	:sunreclaim,
-	:kernelstack,
-	:pagetables,
-	:nfsunstable,
-	:bounce,
-	:writebacktmp,
-	:commitlimit,
-	:committedas,
-	:vmalloctotal,
-	:vmallocused,
-	:vmallocchunk,
-	:hardwarecorrupted,
-	:anonhugepages,
-	:shmemhugepages,
-	:shmempmdmapped,
-	:cmatotal,
-	:cmafree,
-	:hugepagestotal,
-	:hugepagesfree,
-	:hugepagesrsvd,
-	:hugepagessurp,
-	:hugepagesize,
-	:directmap4k,
-	:directmap2m,
-	:directmap1g);
-`
-)
 
 var (
 	SchemaV1 = []string{`
@@ -160,9 +60,76 @@ CREATE TABLE version (Version int);
 `, `
 INSERT INTO version (Version) VALUES (1);
 `, `
+CREATE TABLE measurements (
+	runid			BIGSERIAL UNIQUE NOT NULL,
+	siteid			BIGINT NOT NULL,
+	hostid			BIGINT NOT NULL,
+
+	PRIMARY KEY		(runid, siteid, hostid),
+	UNIQUE			(runid, siteid, hostid)
+);
+`, `
+CREATE TABLE stat (
+	runid			BIGSERIAL NOT NULL,
+	timestamp		TIMESTAMP NOT NULL,
+
+	duration		BIGINT,
+
+	boottime		BIGSERIAL,
+
+	/* CpuTotal CPUStat */
+
+	/* CPU []CPUStat */
+
+	irqtotal		BIGSERIAL,
+	irq			BIGINT[], /* should have been uint64 */
+	contextswitches		BIGSERIAL,
+	processcreated		BIGSERIAL,
+	processesrunning	BIGSERIAL,
+	processesblocked	BIGSERIAL,
+	softirqtotal		BIGSERIAL,
+
+	/* SoftIRQStat */
+	hi			BIGSERIAL,
+	timer			BIGSERIAL,
+	nettx			BIGSERIAL,
+	netrx			BIGSERIAL,
+	block			BIGSERIAL,
+	blockIopoll		BIGSERIAL,
+	tasklet			BIGSERIAL,
+	sched			BIGSERIAL,
+	hrtimer			BIGSERIAL,
+	rcu			BIGSERIAL,
+
+	PRIMARY KEY		(runid, timestamp),
+	UNIQUE			(runid, timestamp)
+);
+`, `
+CREATE TABLE cpustat (
+	runid			BIGSERIAL NOT NULL,
+	timestamp		TIMESTAMP NOT NULL,
+	cpuid			SMALLINT NOT NULL,
+
+	"user"			NUMERIC,
+	nice			NUMERIC,
+	system			NUMERIC,
+	idle			NUMERIC,
+	iowait			NUMERIC,
+	irq			NUMERIC,
+	softirq			NUMERIC,
+	steal			NUMERIC,
+	guest			NUMERIC,
+	guestnice		NUMERIC,
+
+	PRIMARY KEY		(runid, timestamp, cpuid),
+	FOREIGN KEY		(runid, timestamp) REFERENCES stat (runid, timestamp),
+	UNIQUE			(runid, timestamp, cpuid)
+);
+`, `
 CREATE TABLE meminfo (
-	memid			BIGINT,
-	timestamp		TIMESTAMP,
+	runid			BIGSERIAL NOT NULL,
+	timestamp		TIMESTAMP NOT NULL,
+
 	duration		BIGINT,
 
 	memtotal		BIGINT,
@@ -212,6 +179,10 @@ CREATE TABLE meminfo (
 	hugepagesize		BIGINT,
 	directmap4k		BIGINT,
 	directmap2m		BIGINT,
-	directmap1g		BIGINT);
+	directmap1g		BIGINT,
+
+	PRIMARY KEY		(runid, timestamp),
+	FOREIGN KEY		(runid) REFERENCES measurements (runid)
+);
 `}
 )

@@ -337,7 +337,6 @@ func _main() error {
 				log.Errorf("could not process meminfo: %v", err)
 				continue
 			}
-			//spew.Dump(s)
 
 			// stuff in db
 			ss := database.Meminfo2{

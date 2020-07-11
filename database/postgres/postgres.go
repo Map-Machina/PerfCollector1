@@ -87,6 +87,63 @@ func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) 
 	return runId, nil
 }
 
+func (p *postgres) StatInsert(s *database.Stat2) error {
+	// Create a Stat3 record and insert individual CPU records.
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	// Total CPU stats
+	stat := database.CPUStat2{
+		database.CPUStatIdentifiers{
+			RunID: s.RunID,
+			CPUID: -1,
+		},
+		s.Collection,
+		s.CPUTotal,
+	}
+	_, err = tx.NamedExec(database.InsertCPUStat2, &stat)
+	if err != nil {
+		return err
+	}
+
+	// All CPUs
+	for k, v := range s.CPU {
+		stat := database.CPUStat2{
+			database.CPUStatIdentifiers{
+				RunID: s.RunID,
+				CPUID: k,
+			},
+			s.Collection,
+			v,
+		}
+		_, err = tx.NamedExec(database.InsertCPUStat2, &stat)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Stat itself
+	s3 := database.Stat3{
+		s.BootTime,
+		s.IRQTotal,
+		s.IRQ,
+		s.ContextSwitches,
+		s.ProcessCreated,
+		s.ProcessesRunning,
+		s.ProcessesBlocked,
+		s.SoftIRQTotal,
+		s.SoftIRQ,
+	}
+	_, err = tx.NamedExec(database.InsertStat3, &s3)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 func (p *postgres) MeminfoInsert(mi *database.Meminfo2) error {
 	log.Tracef("postgres.MeminfoInsert")
 

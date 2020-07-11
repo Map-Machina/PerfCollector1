@@ -8,7 +8,7 @@ import "github.com/businessperformancetuning/perfcollector/parser"
 type Stat2 struct {
 	StatIdentifiers
 	Collection
-	Stat3 // No cpu stats in the structure
+	parser.Stat // We need to remove CPU identifiers internally
 }
 
 // MeminfoIdentifiers link this meminfo measurement.
@@ -16,7 +16,18 @@ type StatIdentifiers struct {
 	RunID uint64
 }
 
-// Stat2 represents kernel/system statistics without CPU metrics. Used by the
+type CPUStat2 struct {
+	CPUStatIdentifiers
+	Collection
+	parser.CPUStat
+}
+
+type CPUStatIdentifiers struct {
+	RunID uint64
+	CPUID int
+}
+
+// Stat3 represents kernel/system statistics without CPU metrics. Used by the
 // database.
 type Stat3 struct {
 	BootTime uint64
@@ -29,7 +40,7 @@ type Stat3 struct {
 	ProcessesRunning uint64
 	ProcessesBlocked uint64
 	SoftIRQTotal     uint64
-	SoftIRQ          parser.SoftIRQStat
+	parser.SoftIRQStat
 }
 
 // InsertStat3 inserts a stat record into the database.
@@ -89,13 +100,14 @@ VALUES(
 );
 `
 
-	InsertCPUStat = `
+	InsertCPUStat2 = `
 INSERT INTO cpustat (
 	runid,
-	timestamp,
 	cpuid,
+	timestamp,
+	duration,
 
-	user,
+	"user",
 	nice,
 	system,
 	idle,
@@ -107,10 +119,11 @@ INSERT INTO cpustat (
 	guestnice,
 VALUES(
 	:runid,
-	:timestamp,
 	:cpuid,
+	:timestamp,
+	:duration,
 
-	:user,
+	:"user",
 	:nice,
 	:system,
 	:idle,

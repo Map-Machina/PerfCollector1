@@ -1,6 +1,9 @@
 package database
 
-import "github.com/businessperformancetuning/perfcollector/parser"
+import (
+	"github.com/businessperformancetuning/perfcollector/parser"
+	"github.com/lib/pq"
+)
 
 // MemInfo2 is a structure that prefixes the parser.MemInfo with the database
 // identifiers and collection data. We use anonymous structures in order to
@@ -30,16 +33,21 @@ type CPUStatIdentifiers struct {
 // Stat3 represents kernel/system statistics without CPU metrics. Used by the
 // database.
 type Stat3 struct {
+	StatIdentifiers
+	Collection
+
+	// Original stat bits that needed to be modified.
 	BootTime uint64
 	// CPUTotal CPUStat
 	// CPU []CPUStat
 	IRQTotal         uint64
-	IRQ              []uint64
+	IRQ              pq.Int64Array
 	ContextSwitches  uint64
 	ProcessCreated   uint64
 	ProcessesRunning uint64
 	ProcessesBlocked uint64
 	SoftIRQTotal     uint64
+
 	parser.SoftIRQStat
 }
 
@@ -70,7 +78,7 @@ INSERT INTO stat (
 	tasklet,
 	sched,
 	hrtimer,
-	rcu,
+	rcu
 )
 VALUES(
 	:runid,
@@ -96,7 +104,7 @@ VALUES(
 	:tasklet,
 	:sched,
 	:hrtimer,
-	:rcu,
+	:rcu
 );
 `
 
@@ -107,7 +115,7 @@ INSERT INTO cpustat (
 	timestamp,
 	duration,
 
-	"user",
+	usert,
 	nice,
 	system,
 	idle,
@@ -116,14 +124,15 @@ INSERT INTO cpustat (
 	softirq,
 	steal,
 	guest,
-	guestnice,
+	guestnice
+)
 VALUES(
 	:runid,
 	:cpuid,
 	:timestamp,
 	:duration,
 
-	:"user",
+	:usert,
 	:nice,
 	:system,
 	:idle,
@@ -132,7 +141,7 @@ VALUES(
 	:softirq,
 	:steal,
 	:guest,
-	:guestnice,
+	:guestnice
 );
 `
 )

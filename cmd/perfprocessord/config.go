@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfcollectord/sharedconfig"
+	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/util"
 	flags "github.com/jessevdk/go-flags"
@@ -393,7 +394,7 @@ func loadConfig() (*config, []string, error) {
 	if cfg.DBCreate {
 		switch cfg.DB {
 		case "postgres":
-			db, err := postgres.New(cfg.DBURI)
+			db, err := postgres.New(database.Name, cfg.DBURI)
 			if err != nil {
 				err := fmt.Errorf("%s: %v", funcName, err)
 				fmt.Fprintln(os.Stderr, err)

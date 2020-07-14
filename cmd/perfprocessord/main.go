@@ -289,7 +289,7 @@ func _main() error {
 	switch pc.cfg.DB {
 	case "postgres":
 		postgres.UseLogger(dbLog)
-		pc.db, err = postgres.New(pc.cfg.DBURI)
+		pc.db, err = postgres.New(database.Name, pc.cfg.DBURI)
 	default:
 		return fmt.Errorf("Invalid database type: %v", pc.cfg.DB)
 	}
@@ -337,22 +337,40 @@ func _main() error {
 				log.Errorf("could not process meminfo: %v", err)
 				continue
 			}
+			spew.Dump(s)
 
-			// stuff in db
-			ss := database.Meminfo2{
-				database.MeminfoIdentifiers{
-					12,
-				},
-				database.Collection{
-					Timestamp: m.Timestamp,
-					Duration:  m.Duration,
-				},
-				s,
-			}
-			err = pc.db.MeminfoInsert(&ss)
-			if err != nil {
-				log.Errorf("sink MeminfoInsert: %v", err)
-			}
+			//// Insert runid
+			//m := database.Measurements{
+			//	SiteID: 1, // User provided
+			//	HostID: 2, // User provided
+			//}
+			//runId, err := db.MeasurementsInsert(&m)
+			//if err != nil {
+			//	log.Errorf("could not insert measurement: %v", err)
+			//	continue
+			//}
+
+			//// Insert meminfo
+			//ss := database.Meminfo2{
+			//	database.MeminfoIdentifiers{
+			//		12,
+			//	},
+			//	database.Collection{
+			//		Timestamp: m.Timestamp.UnixNano(),
+			//		Duration:  m.Duration,
+			//	},
+			//	s,
+			//}
+			//err = pc.db.MeminfoInsert(&ss)
+			//if err != nil {
+			//	log.Errorf("sink MeminfoInsert: %v", err)
+			//}
+
+			//// Insert stat
+
+			//// Insert net IO
+
+			//// Insert block IO
 		default:
 			log.Errorf("unknown system: %v", m.System)
 		}

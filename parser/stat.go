@@ -30,7 +30,7 @@ const (
 
 // CPUStat shows how much time the cpu spend in various stages.
 type CPUStat struct {
-	User      float64
+	UserT     float64 // Was User but renamed for postgres
 	Nice      float64
 	System    float64
 	Idle      float64
@@ -91,7 +91,7 @@ func parseCPUStat(line string) (CPUStat, int64, error) {
 
 	count, err := fmt.Sscanf(line, "%s %f %f %f %f %f %f %f %f %f %f",
 		&cpu,
-		&cpuStat.User, &cpuStat.Nice, &cpuStat.System, &cpuStat.Idle,
+		&cpuStat.UserT, &cpuStat.Nice, &cpuStat.System, &cpuStat.Idle,
 		&cpuStat.Iowait, &cpuStat.IRQ, &cpuStat.SoftIRQ, &cpuStat.Steal,
 		&cpuStat.Guest, &cpuStat.GuestNice)
 
@@ -102,7 +102,7 @@ func parseCPUStat(line string) (CPUStat, int64, error) {
 		return CPUStat{}, -1, fmt.Errorf("couldn't parse %s (cpu): 0 elements parsed", line)
 	}
 
-	cpuStat.User /= userHZ
+	cpuStat.UserT /= userHZ
 	cpuStat.Nice /= userHZ
 	cpuStat.System /= userHZ
 	cpuStat.Idle /= userHZ

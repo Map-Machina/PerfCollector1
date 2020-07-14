@@ -50,7 +50,7 @@ RETURNING runid;
 // Collection is prefixed after identifiers on every measurement that is being
 // stored.
 type Collection struct {
-	Timestamp time.Time     // Time of collection
+	Timestamp int64         // Time of collection
 	Duration  time.Duration // Time collection took
 }
 
@@ -71,7 +71,7 @@ CREATE TABLE measurements (
 `, `
 CREATE TABLE stat (
 	runid			BIGSERIAL NOT NULL,
-	timestamp		TIMESTAMP NOT NULL,
+	timestamp		BIGINT NOT NULL,
 
 	duration		BIGINT,
 
@@ -107,10 +107,12 @@ CREATE TABLE stat (
 `, `
 CREATE TABLE cpustat (
 	runid			BIGSERIAL NOT NULL,
-	timestamp		TIMESTAMP NOT NULL,
 	cpuid			SMALLINT NOT NULL,
+	timestamp		BIGINT NOT NULL,
 
-	"user"			NUMERIC,
+	duration		BIGINT,
+
+	usert			NUMERIC,
 	nice			NUMERIC,
 	system			NUMERIC,
 	idle			NUMERIC,
@@ -121,14 +123,14 @@ CREATE TABLE cpustat (
 	guest			NUMERIC,
 	guestnice		NUMERIC,
 
-	PRIMARY KEY		(runid, timestamp, cpuid),
+	PRIMARY KEY		(runid, cpuid, timestamp),
 	FOREIGN KEY		(runid, timestamp) REFERENCES stat (runid, timestamp),
-	UNIQUE			(runid, timestamp, cpuid)
+	UNIQUE			(runid, cpuid, timestamp)
 );
 `, `
 CREATE TABLE meminfo (
 	runid			BIGSERIAL NOT NULL,
-	timestamp		TIMESTAMP NOT NULL,
+	timestamp		BIGINT NOT NULL,
 
 	duration		BIGINT,
 

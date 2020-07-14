@@ -6,7 +6,6 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/parser"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -100,7 +99,7 @@ func TestPostgress(t *testing.T) {
 				RunID: 1,
 			},
 			database.Collection{
-				Timestamp: time.Now(),
+				Timestamp: time.Now().UnixNano(),
 				Duration:  time.Second,
 			},
 			parser.Meminfo{
@@ -123,14 +122,13 @@ func TestPostgress(t *testing.T) {
 			RunID: 1,
 		},
 		database.Collection{
-			Timestamp: time.Now(),
+			Timestamp: time.Now().UnixNano(),
 			Duration:  time.Second,
 		},
 		s,
 	}
 	err = db.StatInsert(&s2)
 	if err != nil {
-		spew.Dump(s2)
 		t.Fatal(err)
 	}
 }

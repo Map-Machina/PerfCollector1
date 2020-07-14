@@ -5,6 +5,7 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 )
 
@@ -88,47 +89,26 @@ func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) 
 }
 
 func (p *postgres) StatInsert(s *database.Stat2) error {
-	// Create a Stat3 record and insert individual CPU records.
+	// Insert stat
+	irq := make([]int64, 0, len(s.IRQ))
+	for _, v := range s.IRQ {
+		irq = append(irq, int64(v))
+	}
+
+	// Start database transaction.
 	tx, err := p.db.Beginx()
 	if err != nil {
 		return err
 	}
 
-	// Total CPU stats
-	stat := database.CPUStat2{
-		database.CPUStatIdentifiers{
-			RunID: s.RunID,
-			CPUID: -1,
-		},
+	// Insert stat.
+	stat := database.Stat3{
+		s.StatIdentifiers,
 		s.Collection,
-		s.CPUTotal,
-	}
-	_, err = tx.NamedExec(database.InsertCPUStat2, &stat)
-	if err != nil {
-		return err
-	}
 
-	// All CPUs
-	for k, v := range s.CPU {
-		stat := database.CPUStat2{
-			database.CPUStatIdentifiers{
-				RunID: s.RunID,
-				CPUID: k,
-			},
-			s.Collection,
-			v,
-		}
-		_, err = tx.NamedExec(database.InsertCPUStat2, &stat)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Stat itself
-	s3 := database.Stat3{
 		s.BootTime,
 		s.IRQTotal,
-		s.IRQ,
+		pq.Int64Array(irq),
 		s.ContextSwitches,
 		s.ProcessCreated,
 		s.ProcessesRunning,
@@ -136,11 +116,42 @@ func (p *postgres) StatInsert(s *database.Stat2) error {
 		s.SoftIRQTotal,
 		s.SoftIRQ,
 	}
-	_, err = tx.NamedExec(database.InsertStat3, &s3)
+	_, err = tx.NamedExec(database.InsertStat3, &stat)
 	if err != nil {
 		return err
 	}
 
+	// Total CPU stats
+	cpuStat := database.CPUStat2{
+		database.CPUStatIdentifiers{
+			RunID: s.RunID,
+			CPUID: -1,
+		},
+		s.Collection,
+		s.CPUTotal,
+	}
+	_, err = tx.NamedExec(database.InsertCPUStat2, &cpuStat)
+	if err != nil {
+		return err
+	}
+
+	// All CPUs
+	for k, v := range s.CPU {
+		cpuStat := database.CPUStat2{
+			database.CPUStatIdentifiers{
+				RunID: s.RunID,
+				CPUID: k,
+			},
+			s.Collection,
+			v,
+		}
+		_, err = tx.NamedExec(database.InsertCPUStat2, &cpuStat)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Stat itself
 	return tx.Commit()
 }
 

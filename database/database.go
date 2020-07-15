@@ -186,5 +186,33 @@ CREATE TABLE meminfo (
 	PRIMARY KEY		(runid, timestamp),
 	FOREIGN KEY		(runid) REFERENCES measurements (runid)
 );
+`, `
+CREATE TABLE netdev (
+	runid			BIGSERIAL NOT NULL,
+	timestamp		BIGINT NOT NULL,
+	name			TEXT,
+
+	duration		BIGINT,
+
+	rxbytes			BIGSERIAL,
+	rxpackets		BIGSERIAL,
+	rxerrors		BIGSERIAL,
+	rxdropped		BIGSERIAL,
+	rxfifo			BIGSERIAL,
+	rxframe			BIGSERIAL,
+	rxcompressed		BIGSERIAL,
+	rxmulticast		BIGSERIAL,
+	txbytes			BIGSERIAL,
+	txpackets		BIGSERIAL,
+	txerrors		BIGSERIAL,
+	txdropped		BIGSERIAL,
+	txfifo			BIGSERIAL,
+	txcollisions		BIGSERIAL,
+	txcarrier		BIGSERIAL,
+	txcompressed		BIGSERIAL,
+
+	PRIMARY KEY		(runid, timestamp, name),
+	FOREIGN KEY		(runid) REFERENCES measurements (runid)
+);
 `}
 )

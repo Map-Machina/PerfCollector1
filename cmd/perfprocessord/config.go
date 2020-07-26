@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/businessperformancetuning/perfcollector/cmd/perfcollectord/sharedconfig"
+	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/sharedconfig"
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/util"
@@ -24,7 +24,7 @@ import (
 const (
 	defaultLogLevel    = "info"
 	defaultLogDirname  = "logs"
-	defaultLogFilename = "perfctl.log"
+	defaultLogFilename = "perfprocessord.log"
 )
 
 var (
@@ -35,6 +35,12 @@ var (
 // runServiceCommand is only set to a real function on Windows.  It is used
 // to parse and execute service commands specified via the -s flag.
 var runServiceCommand func(string) error
+
+type HostIdentifier struct {
+	Site uint64
+	Host uint64
+	IP   string // ip:port
+}
 
 // config defines the configuration options for the server.
 //
@@ -50,13 +56,18 @@ type config struct {
 	MemProfile  string `long:"memprofile" description:"Write mem profile to the specified file"`
 	DebugLevel  string `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
 	Version     string
-	SSHKeyFile  string `long:"sshid" description:"File containing the ssh identity"`
-	Host        string `long:"host" description:"SSH host"`
+	SSHKeyFile  string   `long:"sshid" description:"File containing the ssh identity"`
+	Hosts       []string `long:"hosts" description:"Add perfcollector host <siteid:hostid/ip:port>"`
 
 	// Database
 	DBURI    string `long:"dburi" description:"Database URI"`
 	DB       string `long:"db" description:"Database type -- supported types: postgres"`
 	DBCreate bool   `long:"dbcreate" description:"Create database and exit, requires db and admin credentials on dburi"`
+
+	// Journal
+	Journal bool `long:"journal" description:"Enable journaling of raw data."`
+
+	HostsId map[string]HostIdentifier
 }
 
 // serviceOptions defines the configuration options for the rpc as a service
@@ -228,6 +239,7 @@ func loadConfig() (*config, []string, error) {
 		LogDir:     defaultLogDir,
 		SSHKeyFile: defaultSSHKeyFile,
 		Version:    version(),
+		HostsId:    make(map[string]HostIdentifier),
 	}
 
 	// Service options which are only added on Windows.
@@ -349,7 +361,6 @@ func loadConfig() (*config, []string, error) {
 	// Append the network type to the log directory so it is "namespaced"
 	// per network in the same fashion as the data directory.
 	cfg.LogDir = cleanAndExpandPath(cfg.LogDir)
-
 	cfg.SSHKeyFile = cleanAndExpandPath(cfg.SSHKeyFile)
 
 	// Special show command to list supported subsystems and exit.
@@ -379,6 +390,63 @@ func loadConfig() (*config, []string, error) {
 			fmt.Fprintln(os.Stderr, err)
 			fmt.Fprintln(os.Stderr, usageMessage)
 			return nil, nil, err
+		}
+	}
+
+	// Hosts.
+	dedupID := make(map[string]struct{}, len(cfg.Hosts))
+	for _, v := range cfg.Hosts {
+		// Split identifier/ipaddress.
+		a := strings.SplitN(v, "/", 2)
+		if len(a) != 2 {
+			return nil, nil, fmt.Errorf("Invalid Hosts: %v", v)
+		}
+		ipAddress := a[1]
+
+		fmt.Printf("id: %v\n", a[0])
+		fmt.Printf("ipAddress: %v\n", ipAddress)
+
+		// Split site:host.
+		h := strings.SplitN(a[0], ":", 2)
+		if len(h) != 2 {
+			return nil, nil, fmt.Errorf("Invalid identifier: %v",
+				a[0])
+		}
+
+		// Site ID.
+		siteId, err := strconv.ParseUint(h[0], 10, 64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Invalid site %v: %v",
+				h[0], err)
+		}
+
+		// Host ID.
+		hostId, err := strconv.ParseUint(h[1], 10, 64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Invalid host %v: %v",
+				h[1], err)
+		}
+
+		// Make sure there is no duplicate IP.
+		if _, ok := cfg.HostsId[ipAddress]; ok {
+			return nil, nil, fmt.Errorf("duplicate ip address: %v",
+				ipAddress)
+		}
+
+		// Make sure there is no duplicate identifier.
+		if _, ok := dedupID[a[0]]; ok {
+			return nil, nil, fmt.Errorf("duplicate host identifier: %v",
+				a[0])
+		}
+
+		// Insert into dedup map.
+		dedupID[a[0]] = struct{}{}
+
+		// Insert into lookup map.
+		cfg.HostsId[a[1]] = HostIdentifier{
+			Site: siteId,
+			Host: hostId,
+			IP:   a[1],
 		}
 	}
 

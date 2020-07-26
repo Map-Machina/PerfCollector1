@@ -10,7 +10,6 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
-	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/businessperformancetuning/perfcollector/types"
 	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/davecgh/go-spew/spew"
@@ -232,6 +231,10 @@ func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []st
 	return nil
 }
 
+func (pc *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
+	return fmt.Errorf("not yet")
+}
+
 func _main() error {
 	// Load configuration and parse command line.  This function also
 	// initializes logging and configures it accordingly.
@@ -264,7 +267,8 @@ func _main() error {
 	}
 
 	// Connect to ssh server
-	conn, err := ssh.Dial("tcp", pc.cfg.Host, config)
+	chost := pc.cfg.Hosts[0] // XXX
+	conn, err := ssh.Dial("tcp", chost, config)
 	if err != nil {
 		return err
 	}
@@ -313,6 +317,9 @@ func _main() error {
 		return err
 	}
 
+	site := uint64(0)
+	host := uint64(0)
+	run := uint64(0)
 	// We are in sink mode. Register sink and process measurements.
 	dec := gob.NewDecoder(channel)
 	for {
@@ -322,58 +329,67 @@ func _main() error {
 			return err
 		}
 
-		// Post process
-		switch m.System {
-		case "/proc/stat":
-			s, err := parser.ProcessStat(m.Measurement)
+		if pc.cfg.Journal {
+			err := pc.journal(site, host, run, m)
 			if err != nil {
-				log.Errorf("could not process stat: %v", err)
-				continue
+				log.Errorf("journal: %v", err)
 			}
-			spew.Dump(s)
-		case "/proc/meminfo":
-			s, err := parser.ProcessMeminfo(m.Measurement)
-			if err != nil {
-				log.Errorf("could not process meminfo: %v", err)
-				continue
-			}
-			spew.Dump(s)
-
-			//// Insert runid
-			//m := database.Measurements{
-			//	SiteID: 1, // User provided
-			//	HostID: 2, // User provided
-			//}
-			//runId, err := db.MeasurementsInsert(&m)
-			//if err != nil {
-			//	log.Errorf("could not insert measurement: %v", err)
-			//	continue
-			//}
-
-			//// Insert meminfo
-			//ss := database.Meminfo2{
-			//	database.MeminfoIdentifiers{
-			//		12,
-			//	},
-			//	database.Collection{
-			//		Timestamp: m.Timestamp.UnixNano(),
-			//		Duration:  m.Duration,
-			//	},
-			//	s,
-			//}
-			//err = pc.db.MeminfoInsert(&ss)
-			//if err != nil {
-			//	log.Errorf("sink MeminfoInsert: %v", err)
-			//}
-
-			//// Insert stat
-
-			//// Insert net IO
-
-			//// Insert block IO
-		default:
-			log.Errorf("unknown system: %v", m.System)
+			continue
 		}
+
+		//// Post process
+		//switch m.System {
+		//case "/proc/stat":
+		//	s, err := parser.ProcessStat(m.Measurement)
+		//	if err != nil {
+		//		log.Errorf("could not process stat: %v", err)
+		//		continue
+		//	}
+		//	//spew.Dump(s)
+
+		//case "/proc/meminfo":
+		//	s, err := parser.ProcessMeminfo(m.Measurement)
+		//	if err != nil {
+		//		log.Errorf("could not process meminfo: %v", err)
+		//		continue
+		//	}
+		//	//spew.Dump(s)
+
+		//	//// Insert runid
+		//	//m := database.Measurements{
+		//	//	SiteID: 1, // User provided
+		//	//	HostID: 2, // User provided
+		//	//}
+		//	//runId, err := db.MeasurementsInsert(&m)
+		//	//if err != nil {
+		//	//	log.Errorf("could not insert measurement: %v", err)
+		//	//	continue
+		//	//}
+
+		//	//// Insert meminfo
+		//	//ss := database.Meminfo2{
+		//	//	database.MeminfoIdentifiers{
+		//	//		12,
+		//	//	},
+		//	//	database.Collection{
+		//	//		Timestamp: m.Timestamp.UnixNano(),
+		//	//		Duration:  m.Duration,
+		//	//	},
+		//	//	s,
+		//	//}
+		//	//err = pc.db.MeminfoInsert(&ss)
+		//	//if err != nil {
+		//	//	log.Errorf("sink MeminfoInsert: %v", err)
+		//	//}
+
+		//	//// Insert stat
+
+		//	//// Insert net IO
+
+		//	//// Insert block IO
+		//default:
+		//	log.Errorf("unknown system: %v", m.System)
+		//}
 	}
 
 	return nil

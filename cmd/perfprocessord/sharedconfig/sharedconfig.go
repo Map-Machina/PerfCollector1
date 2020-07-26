@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	DefaultConfigFilename = "perfctl.conf"
+	DefaultConfigFilename = "perfprocessord.conf"
 	DefaultDataDirname    = "data"
 )
 
 var (
 	// DefaultHomeDir points to logdump ui daemon home directory
-	DefaultHomeDir = dcrutil.AppDataDir("perfctl", false)
+	DefaultHomeDir = dcrutil.AppDataDir("perfprocessord", false)
 
 	// DefaultConfigFile points to perfcollectord daemon configuration file
 	DefaultConfigFile = filepath.Join(DefaultHomeDir, DefaultConfigFilename)

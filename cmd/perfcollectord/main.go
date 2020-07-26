@@ -297,10 +297,12 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 		}
 
 		var err error
+		timestamp := time.Now()
 		for _, v := range sc.Systems {
 			m := types.PCCollection{
 				System:    v,
-				Timestamp: time.Now(),
+				Timestamp: timestamp,  // Overall timestamp
+				Start:     time.Now(), // This timestamp
 			}
 
 			m.Measurement, err = util.Measure(v)

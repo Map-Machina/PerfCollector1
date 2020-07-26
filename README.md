@@ -3,7 +3,7 @@ Performance data collector and processor.
 
 ## perfcollectord
 ```
-perfcollectord --user=marco --sshid=/home/marco/.ssh/id_ed25519 --listen=127.0.0.1:2222 --allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
+perfcollectord --sshid=/home/marco/.ssh/id_ed25519 --listen=127.0.0.1:2222 --allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
 ```
 
 ## perfprocessord database creation

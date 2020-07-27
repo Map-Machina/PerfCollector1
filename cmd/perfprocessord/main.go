@@ -18,6 +18,58 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+type session struct {
+	conn    *ssh.Client
+	channel ssh.Channel
+}
+
+func (p *PerfCtl) register(address string, s session) error {
+	log.Tracef("register: %v", address)
+	defer log.Tracef("register exit: %v ", address)
+
+	p.Lock()
+	defer p.Unlock()
+
+	if _, ok := p.sessions[address]; ok {
+		return fmt.Errorf("session already registered: %v", address)
+	}
+	p.sessions[address] = s
+
+	return nil
+}
+
+func (p *PerfCtl) unregister(address string) error {
+	log.Tracef("unregister: %v", address)
+	defer log.Tracef("unregister exit: %v ", address)
+
+	p.Lock()
+	defer p.Unlock()
+
+	if s, ok := p.sessions[address]; ok {
+		s.conn.Close()
+		s.channel.Close()
+		delete(p.sessions, address)
+	} else {
+		return fmt.Errorf("session not registered: %v", address)
+	}
+
+	return nil
+}
+
+func (p *PerfCtl) unregisterAll() {
+	log.Tracef("unregisterAll")
+	defer log.Tracef("unregisterAll exit")
+
+	p.Lock()
+	defer p.Unlock()
+
+	for k, v := range p.sessions {
+		v.conn.Close()
+		v.channel.Close()
+		delete(p.sessions, k)
+	}
+}
+
 type PerfCtl struct {
 	sync.RWMutex
 	wg sync.WaitGroup
@@ -25,6 +77,8 @@ type PerfCtl struct {
 	cfg *config
 
 	db database.Database
+
+	sessions map[string]session
 
 	tag  uint                      // Last used tag
 	tags map[uint]chan interface{} // Tag callback
@@ -89,12 +143,12 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, channel ssh.Channel, cmd type
 	return reply, nil
 }
 
-func (p *PerfCtl) oobHandler(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
-	log.Tracef("oobHandler")
+func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Channel, requests <-chan *ssh.Request) {
+	log.Tracef("oobHandler: %v", address)
 	_, cancel := context.WithCancel(ctx)
 	defer func() {
 		cancel()
-		log.Tracef("oobHandler exit")
+		log.Tracef("oobHandler exit: %v", address)
 	}()
 
 	for req := range requests {
@@ -255,17 +309,20 @@ func (pc *PerfCtl) connect(ctx context.Context, address string) (ssh.Channel, er
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
 	// Setup channel.
 	channel, requests, err := conn.OpenChannel(types.PCChannel, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer channel.Close()
+
+	pc.register(address, session{
+		conn:    conn,
+		channel: channel,
+	})
 
 	// Setup out of band handler.
-	go pc.oobHandler(ctx, channel, requests)
+	go pc.oobHandler(ctx, address, channel, requests)
 
 	return channel, nil
 }
@@ -276,13 +333,19 @@ func (pc *PerfCtl) journal(site, host, run uint64, measurement types.PCCollectio
 
 func (pc *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address string) error {
 	log.Tracef("sinkLoop %v:%v", site, host)
-	log.Tracef("sinkLoop exit %v:%v", site, host)
+	defer log.Tracef("sinkLoop exit %v:%v", site, host)
 
 	channel, err := pc.connect(ctx, address)
 	if err != nil {
 		log.Errorf("sendAndWait connect: %v", err)
 		return err
 	}
+
+	defer func() {
+		if err := pc.unregister(address); err != nil {
+			log.Errorf("sink exit unregister: %v", err)
+		}
+	}()
 
 	// Register sinkLoop.
 	_, err = pc.sendAndWait(ctx, channel, types.PCCommand{
@@ -293,23 +356,21 @@ func (pc *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address stri
 		return err
 	}
 
-	log.Tracef("sinkLoop ready to Decode")
 	run := uint64(0)
 	// We are in sinkLoop mode. Register sinkLoop and process measurements.
 	dec := gob.NewDecoder(channel)
 	for {
-		log.Tracef("sinkLoop Decode")
 		var m types.PCCollection
 		err := dec.Decode(&m)
 		if err != nil {
-			log.Errorf("sinkLoop Decode %v:%v: %v", site, host, err)
-			continue
+			return fmt.Errorf("sinkLoop Decode %v:%v: %v",
+				site, host, err)
 		}
 
 		if pc.cfg.Journal {
 			err := pc.journal(site, host, run, m)
 			if err != nil {
-				log.Errorf("sinkLoop journal %v:%v: %v",
+				return fmt.Errorf("sinkLoop journal %v:%v: %v",
 					site, host, err)
 			}
 			continue
@@ -408,8 +469,9 @@ func _main() error {
 	}()
 
 	pc := &PerfCtl{
-		cfg:  loadedCfg,
-		tags: make(map[uint]chan interface{}),
+		cfg:      loadedCfg,
+		tags:     make(map[uint]chan interface{}),
+		sessions: make(map[string]session),
 	}
 
 	log.Infof("Version         : %v", version())
@@ -458,15 +520,15 @@ func _main() error {
 		case sig := <-sigs:
 			log.Infof("Terminating with %v", sig)
 			cancel()
+			pc.unregisterAll()
 			goto done
 		}
 	}
 done:
 
 	// Wait for exit
+	log.Infof("Waiting to exit")
 	pc.wg.Wait()
-
-	log.Infof("Exiting")
 
 	return nil
 }

@@ -432,10 +432,10 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 	return types.Encode(reply)
 }
 
-func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
+func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
 
-	ctx, cancel := context.WithCancel(pctx)
+	ctx, cancel := context.WithCancel(ctx)
 
 	defer func() {
 		cancel()
@@ -445,6 +445,7 @@ func (p *PerfCollector) oobHandler(pctx context.Context, channel ssh.Channel, re
 	for req := range requests {
 		// Always reply or else the other end may hang.
 		req.Reply(true, nil)
+		log.Tracef("oobHandler loop")
 
 		if req.Type != types.PCCmd {
 			log.Errorf("oobHandler unknown request: %v", req.Type)
@@ -550,6 +551,7 @@ func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn,
 		log.Errorf("could not accept channel (%s)", err)
 		return
 	}
+	defer channel.Close()
 
 	go p.oobHandler(ctx, channel, requests)
 
@@ -558,7 +560,6 @@ func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn,
 	// This bug happens when you rehister a sink. Close it. Register again.
 	// This will result in a sink already registered error.
 	for {
-		defer channel.Close()
 		r := bufio.NewReader(channel)
 		for {
 			line, err := r.ReadString('\n')

@@ -5,7 +5,9 @@ import (
 	"encoding/gob"
 	"fmt"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/businessperformancetuning/perfcollector/database"
@@ -18,6 +20,7 @@ import (
 
 type PerfCtl struct {
 	sync.RWMutex
+	wg sync.WaitGroup
 
 	cfg *config
 
@@ -86,8 +89,9 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, channel ssh.Channel, cmd type
 	return reply, nil
 }
 
-func (p *PerfCtl) oobHandler(cancel context.CancelFunc, channel ssh.Channel, requests <-chan *ssh.Request) {
+func (p *PerfCtl) oobHandler(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
+	_, cancel := context.WithCancel(ctx)
 	defer func() {
 		cancel()
 		log.Tracef("oobHandler exit")
@@ -231,108 +235,82 @@ func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []st
 	return nil
 }
 
-func (pc *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
-	return fmt.Errorf("not yet")
-}
-
-func _main() error {
-	// Load configuration and parse command line.  This function also
-	// initializes logging and configures it accordingly.
-	loadedCfg, args, err := loadConfig()
-	if err != nil {
-		return fmt.Errorf("Could not load configuration file: %v", err)
-	}
-	defer func() {
-		if logRotator != nil {
-			logRotator.Close()
-		}
-	}()
-
-	pc := &PerfCtl{
-		cfg:  loadedCfg,
-		tags: make(map[uint]chan interface{}),
-	}
-
-	log.Infof("Version         : %v", version())
-	log.Infof("Home dir        : %v", pc.cfg.HomeDir)
+func (pc *PerfCtl) connect(ctx context.Context, address string) (ssh.Channel, error) {
+	log.Tracef("connect: %v", address)
+	defer log.Tracef("connect exit: %v", address)
 
 	pk, err := util.PublicKeyFile(pc.cfg.SSHKeyFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	config := &ssh.ClientConfig{
 		Auth: []ssh.AuthMethod{pk},
 		//HostKeyCallback: ssh.FixedHostKey(hostKey),
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // XXX security issue
+		Timeout:         5 * time.Second,
 	}
 
 	// Connect to ssh server
-	chost := pc.cfg.Hosts[0] // XXX
-	conn, err := ssh.Dial("tcp", chost, config)
+	conn, err := ssh.Dial("tcp", address, config)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer conn.Close()
 
 	// Setup channel.
 	channel, requests, err := conn.OpenChannel(types.PCChannel, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer channel.Close()
 
 	// Setup out of band handler.
-	ctx, cancel := context.WithCancel(context.Background())
-	go pc.oobHandler(cancel, channel, requests)
+	go pc.oobHandler(ctx, channel, requests)
 
-	if len(args) > 0 && args[0] != "sink" {
-		return pc.handleArgs(ctx, channel, args)
-	}
+	return channel, nil
+}
 
-	// Prepare database
-	switch pc.cfg.DB {
-	case "postgres":
-		postgres.UseLogger(dbLog)
-		pc.db, err = postgres.New(database.Name, pc.cfg.DBURI)
-	default:
-		return fmt.Errorf("Invalid database type: %v", pc.cfg.DB)
-	}
+func (pc *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
+	return fmt.Errorf("not yet")
+}
+
+func (pc *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address string) error {
+	log.Tracef("sinkLoop %v:%v", site, host)
+	log.Tracef("sinkLoop exit %v:%v", site, host)
+
+	channel, err := pc.connect(ctx, address)
 	if err != nil {
+		log.Errorf("sendAndWait connect: %v", err)
 		return err
 	}
 
-	// Open and Close db on exit.
-	if err := pc.db.Open(); err != nil {
-		return err
-	}
-	defer pc.db.Close()
-
-	log.Infof("Database version: %v", database.Version)
-
-	// Register sink.
+	// Register sinkLoop.
 	_, err = pc.sendAndWait(ctx, channel, types.PCCommand{
 		Cmd: types.PCRegisterSink,
 	})
 	if err != nil {
+		log.Errorf("sendAndWait connect: %v", err)
 		return err
 	}
 
-	site := uint64(0)
-	host := uint64(0)
+	log.Tracef("sinkLoop ready to Decode")
 	run := uint64(0)
-	// We are in sink mode. Register sink and process measurements.
+	// We are in sinkLoop mode. Register sinkLoop and process measurements.
 	dec := gob.NewDecoder(channel)
 	for {
+		log.Tracef("sinkLoop Decode")
 		var m types.PCCollection
 		err := dec.Decode(&m)
 		if err != nil {
-			return err
+			log.Errorf("sinkLoop Decode %v:%v: %v", site, host, err)
+			continue
 		}
 
 		if pc.cfg.Journal {
 			err := pc.journal(site, host, run, m)
 			if err != nil {
-				log.Errorf("journal: %v", err)
+				log.Errorf("sinkLoop journal %v:%v: %v",
+					site, host, err)
 			}
 			continue
 		}
@@ -391,6 +369,104 @@ func _main() error {
 		//	log.Errorf("unknown system: %v", m.System)
 		//}
 	}
+}
+
+func (pc *PerfCtl) sink(ctx context.Context, site, host uint64, address string) {
+	log.Tracef("sink %v:%v", site, host)
+
+	defer func() {
+		log.Tracef("sink exit %v:%v", site, host)
+		pc.wg.Done()
+	}()
+	// Always reconnect unless canceled
+	for {
+		err := pc.sinkLoop(ctx, site, host, address)
+		if err != nil {
+			// This may be too loud
+			log.Errorf("sink %v:%v: %v", site, host, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+func _main() error {
+	// Load configuration and parse command line.  This function also
+	// initializes logging and configures it accordingly.
+	loadedCfg, args, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("Could not load configuration file: %v", err)
+	}
+	defer func() {
+		if logRotator != nil {
+			logRotator.Close()
+		}
+	}()
+
+	pc := &PerfCtl{
+		cfg:  loadedCfg,
+		tags: make(map[uint]chan interface{}),
+	}
+
+	log.Infof("Version         : %v", version())
+	log.Infof("Home dir        : %v", pc.cfg.HomeDir)
+
+	// Execute, this needs to come out
+	if len(args) != 0 {
+		return fmt.Errorf("deal with args")
+		//return pc.handleArgs(ctx, channel, args)
+	}
+
+	// Prepare database
+	switch pc.cfg.DB {
+	case "postgres":
+		postgres.UseLogger(dbLog)
+		pc.db, err = postgres.New(database.Name, pc.cfg.DBURI)
+	default:
+		return fmt.Errorf("Invalid database type: %v", pc.cfg.DB)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Open and Close db on exit.
+	if err := pc.db.Open(); err != nil {
+		return err
+	}
+	defer pc.db.Close()
+	log.Infof("Database version: %v", database.Version)
+
+	// Context.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	for k, v := range pc.cfg.HostsId {
+		log.Infof("Connecting %v:%v/%v", v.Site, v.Host, k)
+		pc.wg.Add(1)
+		go pc.sink(ctx, v.Site, v.Host, k)
+	}
+
+	// Setup OS signals
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGINT)
+	for {
+		select {
+		case sig := <-sigs:
+			log.Infof("Terminating with %v", sig)
+			cancel()
+			goto done
+		}
+	}
+done:
+
+	// Wait for exit
+	pc.wg.Wait()
+
+	log.Infof("Exiting")
 
 	return nil
 }

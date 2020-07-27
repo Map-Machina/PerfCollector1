@@ -403,9 +403,6 @@ func loadConfig() (*config, []string, error) {
 		}
 		ipAddress := a[1]
 
-		fmt.Printf("id: %v\n", a[0])
-		fmt.Printf("ipAddress: %v\n", ipAddress)
-
 		// Split site:host.
 		h := strings.SplitN(a[0], ":", 2)
 		if len(h) != 2 {
@@ -451,7 +448,7 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// We only need db commands if we are in sink mode.
-	if cfg.DBURI == "" && len(remainingArgs) > 1 &&
+	if cfg.DBURI == "" && len(remainingArgs) != 0 &&
 		remainingArgs[0] == "sink" {
 		err := fmt.Errorf("%s: must provide database URI",
 			funcName)

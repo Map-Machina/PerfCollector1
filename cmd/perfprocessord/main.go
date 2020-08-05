@@ -152,36 +152,40 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 	}()
 
 	for req := range requests {
-		log.Tracef("oobHandler req.Type: %v", req.Type)
+		log.Tracef("oobHandler req.Type %v: %v", address, req.Type)
 
 		// Always reply or else the other side may hang.
 		req.Reply(true, nil)
 
 		// Handle command.
 		if req.Type != types.PCCmd {
-			log.Errorf("oobHandler unknown request: %v", req.Type)
+			log.Errorf("oobHandler unknown request %v: %v",
+				address, req.Type)
 			continue
 		}
 
 		c, err := types.Decode(req.Type, req.Payload)
 		if err != nil {
-			log.Errorf("oobHandler decode error: %v", err)
+			log.Errorf("oobHandler decode error %v: %v",
+				address, err)
 			continue
 		}
 		cmd, ok := c.(types.PCCommand)
 		if !ok {
 			// Should not happen
-			log.Errorf("oobHandler type assertion error %T", c)
+			log.Errorf("oobHandler type assertion error %v: %T",
+				address, c)
 			continue
 		}
 
-		log.Tracef("oobHandler tag %v", cmd.Tag)
+		log.Tracef("oobHandler tag %v: %v", address, cmd.Tag)
 		// Free tag
 		p.Lock()
 		callback, ok := p.tags[cmd.Tag]
 		if !ok {
 			p.Unlock()
-			log.Errorf("oobHandler unknown tag: %v", cmd.Tag)
+			log.Errorf("oobHandler unknown tag %v: %v",
+				address, cmd.Tag)
 			continue
 		}
 		delete(p.tags, cmd.Tag)
@@ -190,18 +194,19 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 		var reply interface{}
 		switch cmd.Cmd {
 		case types.PCAck:
-			log.Tracef("oobHandler ack %v", cmd.Tag)
+			log.Tracef("oobHandler ack %v: %v", address, cmd.Tag)
 		case types.PCErrorCmd:
 			// Log error and move on.
 			e, ok := cmd.Payload.(types.PCError)
 			if ok {
-				reply = fmt.Errorf("oobHandler remote error: "+
-					"version: %v tag: %v cmd: '%v' error: %v",
-					cmd.Version, cmd.Tag, cmd.Cmd, e.Error)
+				reply = fmt.Errorf("oobHandler remote error "+
+					"%v: version: %v tag: %v cmd: '%v' "+
+					"error: %v", address, cmd.Version,
+					cmd.Tag, cmd.Cmd, e.Error)
 			} else {
 				// Should not happen
 				log.Errorf("oobHandler command type assertion "+
-					"error: %T", cmd.Payload)
+					"error %v: %T", address, cmd.Payload)
 			}
 
 		case types.PCCollectOnceReplyCmd:
@@ -210,7 +215,8 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 				reply = o
 			} else {
 				// Should not happen
-				log.Errorf("type assertion error %T", cmd.Payload)
+				log.Errorf("type assertion error %v: %T",
+					address, cmd.Payload)
 			}
 
 		case types.PCStatusCollectionCmd:
@@ -220,11 +226,13 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 				spew.Dump(reply)
 			} else {
 				// Should not happen
-				log.Errorf("type assertion error %T", cmd.Payload)
+				log.Errorf("type assertion error %v: %T",
+					address, cmd.Payload)
 			}
 
 		default:
-			log.Errorf("oobHandler unknown request: %v", cmd.Cmd)
+			log.Errorf("oobHandler unknown request %v: %v",
+				address, cmd.Cmd)
 			reply := types.PCCommand{
 				Version: types.PCVersion,
 				Tag:     cmd.Tag,
@@ -236,7 +244,8 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 			// Send payload to server.
 			err = p.send(channel, reply, nil)
 			if err != nil {
-				log.Errorf("oobHandler SendRequest: %v", err)
+				log.Errorf("oobHandler SendRequest %v: %v",
+					address, err)
 			}
 		}
 

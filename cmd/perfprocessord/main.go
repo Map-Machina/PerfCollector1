@@ -255,7 +255,13 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 	}
 }
 
-func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []string) error {
+func (p *PerfCtl) singleCommand(ctx context.Context, channel ssh.Channel, args []string) error {
+	log.Tracef("singleCommand: args %v", args)
+	defer func() {
+		p.wg.Done()
+		log.Tracef("singleCommand exit: args %v", args)
+	}()
+
 	if len(args) == 0 {
 		return fmt.Errorf("impossible args length")
 	}
@@ -295,6 +301,44 @@ func (p *PerfCtl) handleArgs(ctx context.Context, channel ssh.Channel, args []st
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
 	}
+	return nil
+}
+
+func (p *PerfCtl) handleArgs(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("impossible args length")
+	}
+
+	// Validate args before doing expensive things.
+	switch args[0] {
+	case "status":
+	case "start":
+	case "stop":
+	default:
+		return fmt.Errorf("unknown command: %v", args[0])
+	}
+
+	// Context.
+	ctx, cancel := context.WithCancel(context.Background())
+	_ = cancel
+
+	for k, v := range p.cfg.HostsId {
+		log.Infof("Connecting %v:%v/%v", v.Site, v.Host, k)
+
+		channel, err := p.connect(ctx, k)
+		if err != nil {
+			log.Errorf("connect: %v", err)
+			continue
+		}
+
+		go p.singleCommand(ctx, channel, args)
+		p.wg.Add(1)
+	}
+
+	// Wait for exit
+	log.Infof("Waiting for commands to complete")
+	p.wg.Wait()
+
 	return nil
 }
 
@@ -488,8 +532,7 @@ func _main() error {
 
 	// Execute, this needs to come out
 	if len(args) != 0 {
-		return fmt.Errorf("deal with args")
-		//return pc.handleArgs(ctx, channel, args)
+		return pc.handleArgs(args)
 	}
 
 	// Prepare database

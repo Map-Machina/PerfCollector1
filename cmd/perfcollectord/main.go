@@ -137,6 +137,7 @@ func (p *PerfCollector) sink() {
 			if !ok {
 				return
 			}
+			log.Tracef("outer encoder %v", e)
 			newEncoder(e)
 			continue
 
@@ -162,6 +163,7 @@ func (p *PerfCollector) sink() {
 			for {
 				// If there is no encoder wait for a new one to
 				// appear.
+				log.Tracef("for loop %v", encoder)
 				if encoder == nil {
 					p.setSinkRegistered(false)
 					select {
@@ -169,6 +171,7 @@ func (p *PerfCollector) sink() {
 						if !ok {
 							return
 						}
+						log.Tracef("encoder %v", e)
 						newEncoder(e)
 					case mc, ok := <-p.newMeasurements:
 						if !ok {
@@ -185,7 +188,7 @@ func (p *PerfCollector) sink() {
 					}
 				}
 
-				// Send measurement to sream.
+				// Send measurement to sink.
 				err := encoder.Encode(*m)
 				if err != nil {
 					// Wait for new encoder
@@ -439,6 +442,15 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 
 	defer func() {
 		cancel()
+
+		// Unregister sink, if set.
+		// XXX this is broken with multiple registers
+		select {
+		case p.newEncoder <- nil:
+		default:
+			panic("shouldn't happen")
+		}
+
 		log.Tracef("oobHandler exit")
 	}()
 

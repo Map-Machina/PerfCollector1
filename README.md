@@ -17,7 +17,7 @@ perfprocessord --dbcreate --db=postgres --dburi='user=marco dbname=postgres host
 
 ## perfprocessord in sink mode (required database)
 ```
-perfprocessord --sshid=/home/marco/.ssh/id_ed25519  --db=postgres --dburi='user=marco dbname=performancedata host=/tmp/' --host=127.0.0.1:2222 --debuglevel=trace sink
+perfprocessord --sshid=/home/marco/.ssh/id_ed25519 --db=postgres --dburi='user=marco dbname=performancedata host=/tmp/'
 ```
 
 ## perfprocessord single shot commands

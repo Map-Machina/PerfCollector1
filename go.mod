@@ -15,5 +15,6 @@ require (
 	github.com/prometheus/common v0.10.0
 	github.com/prometheus/procfs v0.1.3
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	google.golang.org/appengine v1.6.6
 )

@@ -18,6 +18,14 @@ func FileExists(name string) bool {
 	return true
 }
 
+func SupportedSystem(s string) bool {
+	switch s {
+	case "stat":
+		return true
+	}
+	return false
+}
+
 func ValidSystem(s string) bool {
 	path := filepath.Clean(s)
 	if !strings.HasPrefix(path, "/proc/") {

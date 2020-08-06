@@ -19,24 +19,6 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type PerfCollector struct {
-	sync.Mutex
-	newEncoder      chan *gob.Encoder             // New sink encoder
-	newMeasurements chan chan *types.PCCollection // New measurements channel
-	sinkRegistered  bool
-
-	// Sink status channels
-	sinkStatus  chan struct{}
-	sinkStatusR chan *types.PCSinkStatus
-
-	stopCollection    chan struct{} // collection stop channel
-	collectionEnabled *types.PCStartCollection
-
-	cfg *config
-
-	allowedKeys map[string]struct{}
-}
-
 func protocolError(tag uint, format string, args ...interface{}) ([]byte, error) {
 	return types.Encode(types.PCCommand{
 		Tag: tag,
@@ -47,42 +29,105 @@ func protocolError(tag uint, format string, args ...interface{}) ([]byte, error)
 	})
 }
 
-func (p *PerfCollector) setSinkRegistered(s bool) {
-	p.Lock()
-	p.sinkRegistered = s
-	p.Unlock()
+type PerfCollector struct {
+	sync.Mutex
+
+	sinkC chan interface{}
+
+	cfg *config
+
+	allowedKeys map[string]struct{}
 }
 
-func (p *PerfCollector) getSinkRegistered() bool {
-	p.Lock()
-	defer p.Unlock()
-	return p.sinkRegistered
+type sinkRegister struct {
+	encoder *gob.Encoder
+	replyC  chan error
 }
 
-func (p *PerfCollector) setCollectionEnabled(sc *types.PCStartCollection) {
-	p.Lock()
-	if sc == nil {
-		p.collectionEnabled = nil
-	} else {
+type measurementRegister struct {
+	measurementC chan *types.PCCollection
+}
 
-		// Save copy
-		s := *sc
-		p.collectionEnabled = &s
+type measurementDrain struct{}
+
+// writeE writes err non-blocking to the provided channel.
+func writeE(c chan error, err error) {
+	select {
+	case c <- err:
+	default:
 	}
-	p.Unlock()
 }
 
-func (p *PerfCollector) getCollectionEnabled() *types.PCStartCollection {
-	p.Lock()
-	defer p.Unlock()
+func (p *PerfCollector) sink(ctx context.Context) {
+	log.Tracef("sink")
+	defer log.Tracef("sink exit")
 
-	if p.collectionEnabled == nil {
-		return nil
+	var (
+		encoder      *gob.Encoder
+		measurementC chan *types.PCCollection
+	)
+
+	for {
+	done:
+		log.Tracef("sink loop")
+		select {
+		case <-ctx.Done():
+		case cmd, ok := <-p.sinkC:
+			if !ok {
+				log.Errorf("sink: sink channel died")
+				return
+			}
+
+			switch c := cmd.(type) {
+			case sinkRegister:
+				log.Tracef("sink: sinkRegister %p", c.encoder)
+				if encoder != nil && c.encoder != nil {
+					log.Tracef("sink: sink already registered")
+					writeE(c.replyC,
+						fmt.Errorf("sink already registered"))
+				} else {
+					encoder = c.encoder
+					writeE(c.replyC, nil)
+				}
+				continue
+
+			case measurementRegister:
+				log.Tracef("sink: measurementRegister %p",
+					c.measurementC)
+				measurementC = c.measurementC
+				continue
+
+			case measurementDrain:
+				if encoder == nil {
+					log.Tracef("sink: measurementDrain: no encoder")
+					continue
+				}
+				if measurementC == nil {
+					log.Tracef("sink: measurementDrain: no channel")
+					continue
+				}
+				for {
+					var m *types.PCCollection
+					select {
+					case m = <-measurementC:
+					default:
+						log.Tracef("len %v", len(measurementC))
+						goto done
+					}
+					log.Tracef("Sent measurement")
+					err := encoder.Encode(m)
+					if err != nil {
+						log.Errorf("sink encoder: %v", err)
+						encoder = nil
+						continue
+					}
+				}
+
+			default:
+				log.Errorf("sink: unknown type %T", cmd)
+			}
+		}
 	}
-
-	// Return copy
-	sc := *p.collectionEnabled
-	return &sc
 }
 
 func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -99,270 +144,121 @@ func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicK
 	return &ssh.Permissions{}, nil
 }
 
-func (p *PerfCollector) sink() {
-	log.Tracef("sink")
-	defer log.Tracef("sink exit")
-
-	// This code is a bit hard to read but the idea is that we only allow
-	// one stream sink and when the sink goes away we wait for a new
-	// encoder to show up. When the new encoder arrives we flush all
-	// existing measurements.
-	var (
-		encoder      *gob.Encoder
-		measurements chan *types.PCCollection
-	)
-
-	// sinkStatus is a closure that signals the sink status.
-	sinkStatus := func() {
-		currentDepth := 0
-		if measurements != nil {
-			currentDepth = len(measurements)
-		}
-		p.sinkStatusR <- &types.PCSinkStatus{
-			QueueUsed:          currentDepth,
-			SinkEnabled:        encoder != nil,
-			MeasurementEnabled: measurements != nil,
-		}
-
-	}
-
-	newEncoder := func(e *gob.Encoder) {
-		encoder = e
-		p.setSinkRegistered(e != nil)
-	}
-
-	for {
-		select {
-		case e, ok := <-p.newEncoder:
-			if !ok {
-				return
-			}
-			log.Tracef("outer encoder %v", e)
-			newEncoder(e)
-			continue
-
-		case mc, ok := <-p.newMeasurements:
-			if !ok {
-				return
-			}
-			measurements = mc
-			continue
-
-		case _, ok := <-p.sinkStatus:
-			if !ok {
-				return
-			}
-			sinkStatus()
-
-		case m, ok := <-measurements:
-			if !ok {
-				return
-			}
-
-			// Loop in order to no lose measurement.
-			for {
-				// If there is no encoder wait for a new one to
-				// appear.
-				log.Tracef("for loop %v", encoder)
-				if encoder == nil {
-					p.setSinkRegistered(false)
-					select {
-					case e, ok := <-p.newEncoder:
-						if !ok {
-							return
-						}
-						log.Tracef("encoder %v", e)
-						newEncoder(e)
-					case mc, ok := <-p.newMeasurements:
-						if !ok {
-							return
-						}
-						measurements = mc
-						continue
-					case _, ok := <-p.sinkStatus:
-						if !ok {
-							return
-						}
-						sinkStatus()
-						continue
-					}
-				}
-
-				// Send measurement to sink.
-				err := encoder.Encode(*m)
-				if err != nil {
-					// Wait for new encoder
-					encoder = nil
-					continue
-				}
-
-				// Drain measurements
-				select {
-				case m, ok = <-measurements:
-				default:
-					goto done
-				}
-			}
-		done:
-		}
-	}
-}
-
-func (p *PerfCollector) handleChannels(ctx context.Context, conn *ssh.ServerConn, chans <-chan ssh.NewChannel) {
-	log.Tracef("handleChannels")
-	defer log.Tracef("handleChannels exit")
-
-	for newChannel := range chans {
-		log.Tracef("handleChannels: %v", newChannel.ChannelType())
-		go p.handleChannel(ctx, conn, newChannel)
-	}
-}
-
-func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Channel) (func(), []byte, error) {
 	log.Tracef("handleRegisterSink %v", cmd.Tag)
 	defer log.Tracef("handleRegisterSink %v exit", cmd.Tag)
 
-	// Register sink
-	if p.getSinkRegistered() {
-		return protocolError(cmd.Tag, "sink already registered")
-	}
+	replyC := make(chan error)
+
 	select {
-	case p.newEncoder <- gob.NewEncoder(channel):
+	case p.sinkC <- sinkRegister{
+		encoder: gob.NewEncoder(channel),
+		replyC:  replyC,
+	}:
 	default:
+		// XXX This can happen due to the drain. We need some sort of retry here.
 		panic("shouldn't happen")
 	}
 
-	reply := types.PCCommand{
+	log.Tracef("handleRegisterSink: waintig for err")
+	err := <-replyC
+	log.Tracef("handleRegisterSink: waintig for err %v", err)
+	if err != nil {
+		reply, err := protocolError(cmd.Tag, "command %v: %v",
+			cmd.Cmd, err)
+		return nil, reply, err
+	}
+
+	reply, err := types.Encode(types.PCCommand{
 		Version: types.PCVersion,
 		Tag:     cmd.Tag,
 		Cmd:     types.PCAck,
-	}
-
-	return types.Encode(reply)
-}
-
-func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
-	log.Tracef("handleOnce %v", cmd.Cmd)
-	defer log.Tracef("handleOnce %v exit", cmd.Cmd)
-
-	co, ok := cmd.Payload.(types.PCCollectOnce)
-	if !ok {
-		// Should not happen
-		return nil, fmt.Errorf("handleOnce: type assertion error %T",
-			co)
-	}
-
-	payload := types.PCCollectOnceReply{
-		Values: make([][]byte, len(co.Systems)),
-	}
-	var err error
-	for k, v := range co.Systems {
-		log.Tracef("handleOnce: %v", v)
-		payload.Values[k], err = util.Measure(v)
-		if err != nil {
-			log.Errorf("handleOnce ReadFile: %v", err)
-			return protocolError(cmd.Tag, "invalid system: %v", v)
+	})
+	log.Tracef("handleRegisterSink: ERROR: %v", err)
+	var callback func()
+	if err == nil {
+		// Unregister callback
+		log.Tracef("handleRegisterSink: setting callback")
+		callback = func() {
+			log.Tracef("handleRegisterSink: unregister callback")
+			select {
+			case p.sinkC <- sinkRegister{
+				encoder: nil,
+			}:
+			default:
+				// XXX This can happen due to the drain. We need some sort of retry here.
+				panic("shouldn't happen")
+			}
 		}
 	}
 
-	reply := types.PCCommand{
-		Version: types.PCVersion,
-		Tag:     cmd.Tag,
-		Cmd:     types.PCCollectOnceReplyCmd,
-		Payload: payload,
-	}
-
-	return types.Encode(reply)
+	return callback, reply, err
 }
 
 func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCollection) {
 	log.Tracef("startCollection %v", sc.Frequency)
 	defer log.Tracef("startCollection %v exit", sc.Frequency)
 
-	// Message new measurements channel
+	//// Message new measurements channel
 	measurements := make(chan *types.PCCollection, sc.QueueDepth)
 	select {
-	case p.newMeasurements <- measurements:
+	case p.sinkC <- measurementRegister{measurementC: measurements}:
 	default:
+		// XXX This can happen due to the drain. We need some sort of retry here.
 		panic("should not happen")
 	}
 
-	p.setCollectionEnabled(&sc)
+	//p.setCollectionEnabled(&sc)
 
 	t := time.Tick(sc.Frequency) // XXX Replace this with an elapsed time counter
 	for {
 		select {
-		case <-t:
-			//case <-ctx.Done():
-			//	return
-		case <-p.stopCollection:
+		case <-ctx.Done():
 			return
-		}
+		case <-t:
+			//case <-p.stopCollection:
+			//	return
+			//}
 
-		var err error
-		timestamp := time.Now()
-		for _, v := range sc.Systems {
-			m := types.PCCollection{
-				System:    v,
-				Timestamp: timestamp,  // Overall timestamp
-				Start:     time.Now(), // This timestamp
+			var err error
+			timestamp := time.Now()
+			for _, v := range sc.Systems {
+				m := types.PCCollection{
+					System:    v,
+					Timestamp: timestamp,  // Overall timestamp
+					Start:     time.Now(), // This timestamp
+				}
+
+				m.Measurement, err = util.Measure(v)
+				if err != nil {
+					log.Errorf("startCollection: %v", err)
+					// Abort measurement.
+					continue
+				}
+
+				m.Duration = time.Now().Sub(m.Timestamp)
+
+				// Spill last measurement if queue depth is reached
+				select {
+				case measurements <- &m:
+					log.Tracef("startCollection: recording %v", v)
+
+				default:
+					log.Tracef("startCollection: spill %v",
+						len(measurements))
+				}
+
 			}
-
-			m.Measurement, err = util.Measure(v)
-			if err != nil {
-				log.Errorf("startCollection: %v", err)
-				// Abort measurement.
-				continue
-			}
-
-			m.Duration = time.Now().Sub(m.Timestamp)
-
-			// Spill last measurement if queue depth is reached
+			// Signal once that there are measurements to drain.
+			// XXX think about always draining. This may not be a
+			// good idea when we are polling performance every second.
 			select {
-			case measurements <- &m:
-				log.Tracef("startCollection: recording %v", v)
-
+			case p.sinkC <- measurementDrain{}:
 			default:
-				log.Tracef("startCollection: spill %v",
-					len(measurements))
+				log.Tracef("measurementDrain signal failed")
 			}
 		}
 	}
-}
-
-func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
-	log.Tracef("handleStatusCollection %v", cmd.Cmd)
-	defer log.Tracef("handleStatusCollection %v exit", cmd.Cmd)
-
-	if cmd.Payload != nil {
-		return protocolError(cmd.Tag, "invalid status collector payload")
-	}
-
-	sc := p.getCollectionEnabled()
-	if sc == nil {
-		// No collection running.
-		sc = &types.PCStartCollection{}
-	}
-
-	select {
-	case p.sinkStatus <- struct{}{}:
-	default:
-		panic("shouldn't happen")
-	}
-	sinkStatus := <-p.sinkStatusR
-
-	reply := types.PCCommand{
-		Version: types.PCVersion,
-		Tag:     cmd.Tag,
-		Cmd:     types.PCStatusCollectionCmd,
-		Payload: types.PCStatusCollectionReply{
-			Frequency:  sc.Frequency,
-			Systems:    sc.Systems,
-			QueueDepth: sc.QueueDepth,
-			SinkStatus: *sinkStatus,
-		},
-	}
-	return types.Encode(reply)
 }
 
 func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
@@ -389,42 +285,12 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 	}
 
 	// Only allow one collection to run.
-	if p.getCollectionEnabled() != nil {
-		return protocolError(cmd.Tag, "collector already running")
-	}
+	//if p.getCollectionEnabled() != nil {
+	//	return protocolError(cmd.Tag, "collector already running")
+	//}
 
-	p.stopCollection = make(chan struct{})
+	//p.stopCollection = make(chan struct{})
 	go p.startCollection(ctx, sc)
-
-	// Ack remote.
-	reply := types.PCCommand{
-		Version: types.PCVersion,
-		Tag:     cmd.Tag,
-		Cmd:     types.PCAck,
-	}
-	return types.Encode(reply)
-}
-
-func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
-	log.Tracef("handleStopCollection %v", cmd.Cmd)
-	defer log.Tracef("handleStopCollection %v exit", cmd.Cmd)
-
-	if cmd.Payload != nil {
-		return protocolError(cmd.Tag, "invalid stop collector payload")
-	}
-
-	// Return error if collection isn't running.
-	if p.getCollectionEnabled() == nil {
-		return protocolError(cmd.Tag, "collector not running")
-	}
-
-	select {
-	case p.newMeasurements <- nil:
-	default:
-		panic("should not happen")
-	}
-	close(p.stopCollection)
-	p.setCollectionEnabled(nil)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -437,24 +303,12 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 
 func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
-
-	ctx, cancel := context.WithCancel(ctx)
-
 	defer func() {
-		cancel()
-
-		// Unregister sink, if set.
-		// XXX this is broken with multiple registers
-		select {
-		case p.newEncoder <- nil:
-		default:
-			panic("shouldn't happen")
-		}
-
 		log.Tracef("oobHandler exit")
 	}()
 
 	for req := range requests {
+		_ = req
 		// Always reply or else the other end may hang.
 		req.Reply(true, nil)
 		log.Tracef("oobHandler loop")
@@ -502,19 +356,23 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 
 			// Commands that require ack
 		case types.PCRegisterSink:
-			reply, err = p.handleRegisterSink(cmd, channel)
+			var callback func()
+			callback, reply, err = p.handleRegisterSink(cmd, channel)
+			if callback != nil {
+				// Unregister on exit.
+				defer callback()
+			}
+		//case types.PCCollectOnceCmd:
+		//	reply, err = p.handleOnce(cmd)
 
-		case types.PCCollectOnceCmd:
-			reply, err = p.handleOnce(cmd)
-
-		case types.PCStatusCollectionCmd:
-			reply, err = p.handleStatusCollection(ctx, cmd, channel)
+		//case types.PCStatusCollectionCmd:
+		//	reply, err = p.handleStatusCollection(ctx, cmd, channel)
 
 		case types.PCStartCollectionCmd:
 			reply, err = p.handleStartCollection(ctx, cmd, channel)
 
-		case types.PCStopCollectionCmd:
-			reply, err = p.handleStopCollection(ctx, cmd, channel)
+		//case types.PCStopCollectionCmd:
+		//	reply, err = p.handleStopCollection(ctx, cmd, channel)
 
 		default:
 			reply, err = protocolError(cmd.Tag, "unknown OOB "+
@@ -541,6 +399,7 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 			// Nothing to do
 			continue
 		}
+
 		_, err = channel.SendRequest(types.PCCmd, false, reply)
 		if err != nil {
 			log.Errorf("oobHandler SendRequest: %v", err)
@@ -550,28 +409,29 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 
 func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn, newChannel ssh.NewChannel) {
 	log.Tracef("handleChannel")
-	defer log.Tracef("handleChannel exit")
+	defer func() {
+		log.Tracef("handleChannel exit")
+	}()
 
 	if t := newChannel.ChannelType(); t != types.PCChannel {
 		_ = newChannel.Reject(ssh.UnknownChannelType,
 			fmt.Sprintf("unknown channel type: %s", t))
+		log.Errorf("handleChannel: unknown channel %s", t)
 		return
 	}
 
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		log.Errorf("could not accept channel (%s)", err)
+		log.Errorf("handleChannel: could not accept channel (%s)", err)
 		return
 	}
 	defer channel.Close()
 
 	go p.oobHandler(ctx, channel, requests)
 
-	// XXX if a sink was registered in this session we need to signal the
-	// sink function that the encoder has become nil.
-	// This bug happens when you rehister a sink. Close it. Register again.
-	// This will result in a sink already registered error.
 	for {
+		// We do not use the read sink in the collector. Just log the
+		// line if something comes in.
 		r := bufio.NewReader(channel)
 		for {
 			line, err := r.ReadString('\n')
@@ -579,12 +439,22 @@ func (p *PerfCollector) handleChannel(ctx context.Context, conn *ssh.ServerConn,
 				log.Tracef("handleChannel read error: %v", err)
 				return
 			}
-			log.Infof(line)
+			log.Debugf(line)
 		}
 	}
 }
 
-func (p *PerfCollector) sshServe(listen string, signer ssh.Signer) error {
+func (p *PerfCollector) handleChannels(ctx context.Context, conn *ssh.ServerConn, chans <-chan ssh.NewChannel) {
+	log.Tracef("handleChannels")
+	defer log.Tracef("handleChannels exit")
+
+	for newChannel := range chans {
+		log.Tracef("handleChannels: %v", newChannel.ChannelType())
+		go p.handleChannel(ctx, conn, newChannel)
+	}
+}
+
+func (p *PerfCollector) sshServe(ctx context.Context, listen string, signer ssh.Signer) error {
 	log.Tracef("sshServe %v", listen)
 	defer log.Tracef("sshServe %v exit", listen)
 
@@ -599,8 +469,6 @@ func (p *PerfCollector) sshServe(listen string, signer ssh.Signer) error {
 		PublicKeyCallback: p.publicKeyCallback,
 	}
 	sshConfig.AddHostKey(signer)
-
-	ctx := context.Background()
 
 	log.Infof("Listen: %v", listen)
 	for {
@@ -634,20 +502,17 @@ func _main() error {
 		}
 	}()
 
-	pc := &PerfCollector{
-		cfg:             loadedCfg,
-		allowedKeys:     make(map[string]struct{}),
-		newEncoder:      make(chan *gob.Encoder),
-		newMeasurements: make(chan chan *types.PCCollection),
-		sinkStatus:      make(chan struct{}),
-		sinkStatusR:     make(chan *types.PCSinkStatus),
+	p := &PerfCollector{
+		cfg:         loadedCfg,
+		allowedKeys: make(map[string]struct{}),
+		sinkC:       make(chan interface{}),
 	}
-	for _, v := range pc.cfg.AllowedKeys {
-		pc.allowedKeys[v] = struct{}{}
+	for _, v := range p.cfg.AllowedKeys {
+		p.allowedKeys[v] = struct{}{}
 	}
 
 	log.Infof("Version      : %v", version())
-	log.Infof("Home dir     : %v", pc.cfg.HomeDir)
+	log.Infof("Home dir     : %v", p.cfg.HomeDir)
 
 	// Create the data directory in case it does not exist.
 	err = os.MkdirAll(loadedCfg.DataDir, 0700)
@@ -662,14 +527,15 @@ func _main() error {
 	}
 
 	// Prepare sink
-	go pc.sink()
+	ctx, cancel := context.WithCancel(context.Background())
+	go p.sink(ctx)
 
 	// Listen for incoming SSH connections.
 	listenC := make(chan error)
 	for _, listener := range loadedCfg.Listeners {
 		listen := listener
 		go func() {
-			listenC <- pc.sshServe(listen, signer)
+			listenC <- p.sshServe(ctx, listen, signer)
 		}()
 	}
 
@@ -691,6 +557,7 @@ func _main() error {
 		}
 	}
 done:
+	cancel()
 	log.Infof("Waiting on subsystems to shut down")
 
 	log.Infof("Exiting")

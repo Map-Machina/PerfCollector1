@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -16,14 +19,25 @@ import (
 	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/errgroup"
 )
 
-type session struct {
-	conn    *ssh.Client
-	channel ssh.Channel
+type terminalError struct {
+	err error
 }
 
-func (p *PerfCtl) register(address string, s session) error {
+func (te terminalError) Error() string {
+	return te.err.Error()
+}
+
+type session struct {
+	address  string
+	conn     *ssh.Client
+	channel  ssh.Channel
+	requests <-chan *ssh.Request
+}
+
+func (p *PerfCtl) register(address string, s *session) error {
 	log.Tracef("register: %v", address)
 	defer log.Tracef("register exit: %v ", address)
 
@@ -72,13 +86,12 @@ func (p *PerfCtl) unregisterAll() {
 
 type PerfCtl struct {
 	sync.RWMutex
-	wg sync.WaitGroup
 
 	cfg *config
 
 	db database.Database
 
-	sessions map[string]session
+	sessions map[string]*session // XXX ugh pointer, fix
 
 	tag  uint                      // Last used tag
 	tags map[uint]chan interface{} // Tag callback
@@ -143,16 +156,14 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, channel ssh.Channel, cmd type
 	return reply, nil
 }
 
-func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Channel, requests <-chan *ssh.Request) {
-	log.Tracef("oobHandler: %v", address)
-	_, cancel := context.WithCancel(ctx)
+func (p *PerfCtl) oobHandler(s *session) error {
+	log.Tracef("oobHandler: %v", s.address)
 	defer func() {
-		cancel()
-		log.Tracef("oobHandler exit: %v", address)
+		log.Tracef("oobHandler exit: %v", s.address)
 	}()
 
-	for req := range requests {
-		log.Tracef("oobHandler req.Type %v: %v", address, req.Type)
+	for req := range s.requests {
+		log.Tracef("oobHandler req.Type %v: %v", s.address, req.Type)
 
 		// Always reply or else the other side may hang.
 		req.Reply(true, nil)
@@ -160,32 +171,32 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 		// Handle command.
 		if req.Type != types.PCCmd {
 			log.Errorf("oobHandler unknown request %v: %v",
-				address, req.Type)
+				s.address, req.Type)
 			continue
 		}
 
 		c, err := types.Decode(req.Type, req.Payload)
 		if err != nil {
 			log.Errorf("oobHandler decode error %v: %v",
-				address, err)
+				s.address, err)
 			continue
 		}
 		cmd, ok := c.(types.PCCommand)
 		if !ok {
 			// Should not happen
 			log.Errorf("oobHandler type assertion error %v: %T",
-				address, c)
+				s.address, c)
 			continue
 		}
 
-		log.Tracef("oobHandler tag %v: %v", address, cmd.Tag)
+		log.Tracef("oobHandler tag %v: %v", s.address, cmd.Tag)
 		// Free tag
 		p.Lock()
 		callback, ok := p.tags[cmd.Tag]
 		if !ok {
 			p.Unlock()
 			log.Errorf("oobHandler unknown tag %v: %v",
-				address, cmd.Tag)
+				s.address, cmd.Tag)
 			continue
 		}
 		delete(p.tags, cmd.Tag)
@@ -194,19 +205,19 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 		var reply interface{}
 		switch cmd.Cmd {
 		case types.PCAck:
-			log.Tracef("oobHandler ack %v: %v", address, cmd.Tag)
+			log.Tracef("oobHandler ack %v: %v", s.address, cmd.Tag)
 		case types.PCErrorCmd:
 			// Log error and move on.
 			e, ok := cmd.Payload.(types.PCError)
 			if ok {
 				reply = fmt.Errorf("oobHandler remote error "+
 					"%v: version: %v tag: %v cmd: '%v' "+
-					"error: %v", address, cmd.Version,
+					"error: %v", s.address, cmd.Version,
 					cmd.Tag, cmd.Cmd, e.Error)
 			} else {
 				// Should not happen
 				log.Errorf("oobHandler command type assertion "+
-					"error %v: %T", address, cmd.Payload)
+					"error %v: %T", s.address, cmd.Payload)
 			}
 
 		case types.PCCollectOnceReplyCmd:
@@ -216,23 +227,23 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 			} else {
 				// Should not happen
 				log.Errorf("type assertion error %v: %T",
-					address, cmd.Payload)
+					s.address, cmd.Payload)
 			}
 
 		case types.PCStatusCollectionCmd:
-			s, ok := cmd.Payload.(types.PCStatusCollectionReply)
+			status, ok := cmd.Payload.(types.PCStatusCollectionReply)
 			if ok {
-				reply = s
+				reply = status
 				spew.Dump(reply)
 			} else {
 				// Should not happen
 				log.Errorf("type assertion error %v: %T",
-					address, cmd.Payload)
+					s.address, cmd.Payload)
 			}
 
 		default:
 			log.Errorf("oobHandler unknown request %v: %v",
-				address, cmd.Cmd)
+				s.address, cmd.Cmd)
 			reply := types.PCCommand{
 				Version: types.PCVersion,
 				Tag:     cmd.Tag,
@@ -242,10 +253,10 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 				},
 			}
 			// Send payload to server.
-			err = p.send(channel, reply, nil)
+			err = p.send(s.channel, reply, nil)
 			if err != nil {
 				log.Errorf("oobHandler SendRequest %v: %v",
-					address, err)
+					s.address, err)
 			}
 		}
 
@@ -253,12 +264,13 @@ func (p *PerfCtl) oobHandler(ctx context.Context, address string, channel ssh.Ch
 			callback <- reply
 		}
 	}
+
+	return io.EOF
 }
 
-func (p *PerfCtl) singleCommand(ctx context.Context, channel ssh.Channel, args []string) error {
+func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) error {
 	log.Tracef("singleCommand: args %v", args)
 	defer func() {
-		p.wg.Done()
 		log.Tracef("singleCommand exit: args %v", args)
 	}()
 
@@ -268,7 +280,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, channel ssh.Channel, args [
 
 	switch args[0] {
 	case "status":
-		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
 			Cmd: types.PCStatusCollectionCmd,
 		})
 		if err != nil {
@@ -276,7 +288,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, channel ssh.Channel, args [
 		}
 
 	case "start":
-		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
 			Cmd: types.PCStartCollectionCmd,
 			Payload: types.PCStartCollection{
 				Frequency:  5 * time.Second,
@@ -291,7 +303,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, channel ssh.Channel, args [
 		}
 
 	case "stop":
-		_, err := p.sendAndWait(ctx, channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
 			Cmd: types.PCStopCollectionCmd,
 		})
 		if err != nil {
@@ -320,33 +332,51 @@ func (p *PerfCtl) handleArgs(args []string) error {
 
 	// Context.
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel
 
+	var eg errgroup.Group
 	for k, v := range p.cfg.HostsId {
 		log.Infof("Connecting %v:%v/%v", v.Site, v.Host, k)
 
-		channel, err := p.connect(ctx, k)
+		session, err := p.connect(ctx, k)
 		if err != nil {
 			log.Errorf("connect: %v", err)
 			continue
 		}
 
-		go p.singleCommand(ctx, channel, args)
-		p.wg.Add(1)
+		// XXX this is probably not right with a single failing command
+
+		// Setup out of band handler.
+		eg.Go(func() error {
+			err := p.oobHandler(session)
+			if err != nil {
+				log.Errorf("handleArgs oobHandler: %v", err)
+				cancel()
+			}
+			return err
+		})
+
+		eg.Go(func() error {
+			err := p.singleCommand(ctx, session, args)
+			if err != nil {
+				log.Errorf("handleArgs singleCommand: %v", err)
+			}
+			session.channel.Close()
+			return err
+		})
 	}
 
 	// Wait for exit
 	log.Infof("Waiting for commands to complete")
-	p.wg.Wait()
+	eg.Wait()
 
 	return nil
 }
 
-func (pc *PerfCtl) connect(ctx context.Context, address string) (ssh.Channel, error) {
+func (p *PerfCtl) connect(ctx context.Context, address string) (*session, error) {
 	log.Tracef("connect: %v", address)
 	defer log.Tracef("connect exit: %v", address)
 
-	pk, err := util.PublicKeyFile(pc.cfg.SSHKeyFile)
+	pk, err := util.PublicKeyFile(p.cfg.SSHKeyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -369,49 +399,67 @@ func (pc *PerfCtl) connect(ctx context.Context, address string) (ssh.Channel, er
 		return nil, err
 	}
 
-	pc.register(address, session{
-		conn:    conn,
-		channel: channel,
-	})
+	session := &session{
+		conn:     conn,
+		channel:  channel,
+		requests: requests,
+		address:  address,
+	}
+	p.register(address, session)
 
-	// Setup out of band handler.
-	go pc.oobHandler(ctx, address, channel, requests)
-
-	return channel, nil
+	return session, nil
 }
 
-func (pc *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
-	return fmt.Errorf("not yet")
+func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
+	if !util.ValidSystem(measurement.System) {
+		return fmt.Errorf("journal unsupported system: %v",
+			measurement.System)
+	}
+
+	dir := filepath.Join(p.cfg.DataDir, strconv.Itoa(int(site)),
+		strconv.Itoa(int(host)), strconv.Itoa(int(run)))
+	err := os.MkdirAll(dir, 0750)
+	if err != nil {
+		return err
+	}
+
+	// Journal in JSON to remain human readability.
+	panic("implement me")
+
+	return nil
 }
 
-func (pc *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address string) error {
+func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address string) error {
 	log.Tracef("sinkLoop %v:%v", site, host)
 	defer log.Tracef("sinkLoop exit %v:%v", site, host)
 
-	channel, err := pc.connect(ctx, address)
+	s, err := p.connect(ctx, address)
 	if err != nil {
 		log.Errorf("sendAndWait connect: %v", err)
 		return err
 	}
 
 	defer func() {
-		if err := pc.unregister(address); err != nil {
+		if err := p.unregister(address); err != nil {
 			log.Errorf("sink exit unregister: %v", err)
 		}
 	}()
 
+	// Setup out of band handler.
+	go p.oobHandler(s)
+
 	// Register sinkLoop.
-	_, err = pc.sendAndWait(ctx, channel, types.PCCommand{
+	_, err = p.sendAndWait(ctx, s.channel, types.PCCommand{
 		Cmd: types.PCRegisterSink,
 	})
 	if err != nil {
 		log.Errorf("sendAndWait connect: %v", err)
-		return err
+		return terminalError{err: err}
 	}
 
 	run := uint64(0)
 	// We are in sinkLoop mode. Register sinkLoop and process measurements.
-	dec := gob.NewDecoder(channel)
+	dec := gob.NewDecoder(s.channel)
 	for {
 		var m types.PCCollection
 		err := dec.Decode(&m)
@@ -419,9 +467,9 @@ func (pc *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address stri
 			return fmt.Errorf("sinkLoop Decode %v:%v: %v",
 				site, host, err)
 		}
-
-		if pc.cfg.Journal {
-			err := pc.journal(site, host, run, m)
+		log.Tracef("Received record")
+		if p.cfg.Journal {
+			err := p.journal(site, host, run, m)
 			if err != nil {
 				return fmt.Errorf("sinkLoop journal %v:%v: %v",
 					site, host, err)
@@ -485,27 +533,32 @@ func (pc *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address stri
 	}
 }
 
-func (pc *PerfCtl) sink(ctx context.Context, site, host uint64, address string) {
+func (p *PerfCtl) sink(ctx context.Context, site, host uint64, address string) error {
 	log.Tracef("sink %v:%v", site, host)
 
 	defer func() {
 		log.Tracef("sink exit %v:%v", site, host)
-		pc.wg.Done()
 	}()
 	// Always reconnect unless canceled
 	for {
-		err := pc.sinkLoop(ctx, site, host, address)
+		err := p.sinkLoop(ctx, site, host, address)
 		if err != nil {
+			if _, ok := err.(terminalError); ok {
+				log.Errorf("sink error: %v", err)
+				return err
+			}
 			// This may be too loud
 			log.Errorf("sink %v:%v: %v", site, host, err)
 		}
 
 		select {
 		case <-ctx.Done():
-			return
+			break
 		case <-time.After(5 * time.Second):
 		}
 	}
+
+	return nil
 }
 
 func _main() error {
@@ -521,46 +574,52 @@ func _main() error {
 		}
 	}()
 
-	pc := &PerfCtl{
+	p := &PerfCtl{
 		cfg:      loadedCfg,
 		tags:     make(map[uint]chan interface{}),
-		sessions: make(map[string]session),
+		sessions: make(map[string]*session),
 	}
 
 	log.Infof("Version         : %v", version())
-	log.Infof("Home dir        : %v", pc.cfg.HomeDir)
+	log.Infof("Home dir        : %v", p.cfg.HomeDir)
 
 	// Execute, this needs to come out
 	if len(args) != 0 {
-		return pc.handleArgs(args)
+		return p.handleArgs(args)
 	}
 
 	// Prepare database
-	switch pc.cfg.DB {
+	switch p.cfg.DB {
 	case "postgres":
 		postgres.UseLogger(dbLog)
-		pc.db, err = postgres.New(database.Name, pc.cfg.DBURI)
+		p.db, err = postgres.New(database.Name, p.cfg.DBURI)
 	default:
-		return fmt.Errorf("Invalid database type: %v", pc.cfg.DB)
+		return fmt.Errorf("Invalid database type: %v", p.cfg.DB)
 	}
 	if err != nil {
 		return err
 	}
 
 	// Open and Close db on exit.
-	if err := pc.db.Open(); err != nil {
+	if err := p.db.Open(); err != nil {
 		return err
 	}
-	defer pc.db.Close()
+	defer p.db.Close()
 	log.Infof("Database version: %v", database.Version)
 
 	// Context.
 	ctx, cancel := context.WithCancel(context.Background())
 
-	for k, v := range pc.cfg.HostsId {
+	var eg errgroup.Group
+	for k, v := range p.cfg.HostsId {
 		log.Infof("Connecting %v:%v/%v", v.Site, v.Host, k)
-		pc.wg.Add(1)
-		go pc.sink(ctx, v.Site, v.Host, k)
+		eg.Go(func() error {
+			err := p.sink(ctx, v.Site, v.Host, k)
+			if err != nil {
+				cancel()
+			}
+			return err
+		})
 	}
 
 	// Setup OS signals
@@ -572,7 +631,9 @@ func _main() error {
 		case sig := <-sigs:
 			log.Infof("Terminating with %v", sig)
 			cancel()
-			pc.unregisterAll()
+			p.unregisterAll()
+			goto done
+		case <-ctx.Done():
 			goto done
 		}
 	}
@@ -580,7 +641,6 @@ done:
 
 	// Wait for exit
 	log.Infof("Waiting to exit")
-	pc.wg.Wait()
 
 	return nil
 }

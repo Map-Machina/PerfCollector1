@@ -1,0 +1,33 @@
+Platform Profile:
+ CPU User Percent
+ CPU User Percent min
+ CPU User Percent max
+ CPU Steal Percent
+ CPU Context Switches
+ Memory Used Percent
+ Memory Committed KB
+ Memory Used KB
+ Pages In
+ Pages Out
+ Pages Free
+ File Transactions per second
+ File Read Transactions per second
+ File write Transactions per second
+ File Bytes written per second
+ Network Received Packets
+ Network Received Bytes
+ Network Received Bytes min
+ Network Received Bytes max
+ Network Transmitted Packets
+ Network Transmitted Bytes
+ Network Transmitted Bytes min
+ Network Transmitted Bytes max
+  
+   
+Workload Profile:
+   cpu_user_perc
+   file_bread
+   file_bwrtn
+   mem_used_perc
+   net_rx_bytes
+   net_tx_bytes

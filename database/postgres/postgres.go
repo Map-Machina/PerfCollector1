@@ -5,7 +5,6 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 )
 
@@ -88,77 +87,10 @@ func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) 
 	return runId, nil
 }
 
-func (p *postgres) StatInsert(s *database.Stat2) error {
-	// Insert stat
-	irq := make([]int64, 0, len(s.IRQ))
-	for _, v := range s.IRQ {
-		irq = append(irq, int64(v))
-	}
+func (p *postgres) StatInsert(s *database.Stat) error {
+	log.Tracef("postgres.StatInsert")
 
-	// Start database transaction.
-	tx, err := p.db.Beginx()
-	if err != nil {
-		return err
-	}
-
-	// Insert stat.
-	stat := database.Stat3{
-		s.StatIdentifiers,
-		s.Collection,
-
-		s.BootTime,
-		s.IRQTotal,
-		pq.Int64Array(irq),
-		s.ContextSwitches,
-		s.ProcessCreated,
-		s.ProcessesRunning,
-		s.ProcessesBlocked,
-		s.SoftIRQTotal,
-		s.SoftIRQ,
-	}
-	_, err = tx.NamedExec(database.InsertStat3, &stat)
-	if err != nil {
-		return err
-	}
-
-	// Total CPU stats
-	cpuStat := database.CPUStat2{
-		database.CPUStatIdentifiers{
-			RunID: s.RunID,
-			CPUID: -1,
-		},
-		s.Collection,
-		s.CPUTotal,
-	}
-	_, err = tx.NamedExec(database.InsertCPUStat2, &cpuStat)
-	if err != nil {
-		return err
-	}
-
-	// All CPUs
-	for k, v := range s.CPU {
-		cpuStat := database.CPUStat2{
-			database.CPUStatIdentifiers{
-				RunID: s.RunID,
-				CPUID: k,
-			},
-			s.Collection,
-			v,
-		}
-		_, err = tx.NamedExec(database.InsertCPUStat2, &cpuStat)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Stat itself
-	return tx.Commit()
-}
-
-func (p *postgres) MeminfoInsert(mi *database.Meminfo2) error {
-	log.Tracef("postgres.MeminfoInsert")
-
-	_, err := p.db.NamedExec(database.InsertMeminfo2, mi)
+	_, err := p.db.NamedExec(database.InsertStat, s)
 	return err
 }
 

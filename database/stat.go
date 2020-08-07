@@ -1,147 +1,52 @@
 package database
 
-import (
-	"github.com/businessperformancetuning/perfcollector/parser"
-	"github.com/lib/pq"
-)
+// 12:50:56        CPU     %user     %nice   %system   %iowait    %steal     %idle
+type Stat struct {
+	RunID uint64 // ID for this measurement
 
-// MemInfo2 is a structure that prefixes the parser.MemInfo with the database
-// identifiers and collection data. We use anonymous structures in order to
-// minimize code churn.
-type Stat2 struct {
-	StatIdentifiers
-	Collection
-	parser.Stat // We need to remove CPU identifiers internally
+	Timestamp int64 // UNIX timestamp of overall measurement
+	Start     int64 // UNIX timestamp of this measurement
+	Duration  int64 // Duration of measurement in nano seconds
+
+	CPU    int
+	UserT  float64
+	Nice   float64
+	System float64
+	IOWait float64
+	Steal  float64
+	Idle   float64
 }
 
-// MeminfoIdentifiers link this meminfo measurement.
-type StatIdentifiers struct {
-	RunID uint64
-}
-
-type CPUStat2 struct {
-	CPUStatIdentifiers
-	Collection
-	parser.CPUStat
-}
-
-type CPUStatIdentifiers struct {
-	RunID uint64
-	CPUID int
-}
-
-// Stat3 represents kernel/system statistics without CPU metrics. Used by the
-// database.
-type Stat3 struct {
-	StatIdentifiers
-	Collection
-
-	// Original stat bits that needed to be modified.
-	BootTime uint64
-	// CPUTotal CPUStat
-	// CPU []CPUStat
-	IRQTotal         uint64
-	IRQ              pq.Int64Array
-	ContextSwitches  uint64
-	ProcessCreated   uint64
-	ProcessesRunning uint64
-	ProcessesBlocked uint64
-	SoftIRQTotal     uint64
-
-	parser.SoftIRQStat
-}
-
-// InsertStat3 inserts a stat record into the database.
+// InsertStat inserts a stat record into the database.
 var (
-	InsertStat3 = `
+	InsertStat = `
 INSERT INTO stat (
 	runid,
 	timestamp,
+	start,
 	duration,
 
-	boottime,
-	irqtotal,
-	irq,
-	contextswitches,
-	processcreated,
-	processesrunning,
-	processesblocked,
-	softirqtotal,
-
-	/* SoftIRQStat */
-	hi,
-	timer,
-	nettx,
-	netrx,
-	block,
-	blockiopoll,
-	tasklet,
-	sched,
-	hrtimer,
-	rcu
-)
-VALUES(
-	:runid,
-	:timestamp,
-	:duration,
-
-	:boottime,
-	:irqtotal,
-	:irq,
-	:contextswitches,
-	:processcreated,
-	:processesrunning,
-	:processesblocked,
-	:softirqtotal,
-
-	/* SoftIRQStat */
-	:hi,
-	:timer,
-	:nettx,
-	:netrx,
-	:block,
-	:blockiopoll,
-	:tasklet,
-	:sched,
-	:hrtimer,
-	:rcu
-);
-`
-
-	InsertCPUStat2 = `
-INSERT INTO cpustat (
-	runid,
-	cpuid,
-	timestamp,
-	duration,
-
+	cpu,
 	usert,
 	nice,
 	system,
-	idle,
 	iowait,
-	irq,
-	softirq,
 	steal,
-	guest,
-	guestnice
+	idle
 )
 VALUES(
 	:runid,
-	:cpuid,
 	:timestamp,
+	:start,
 	:duration,
 
+	:cpu,
 	:usert,
 	:nice,
 	:system,
-	:idle,
 	:iowait,
-	:irq,
-	:softirq,
 	:steal,
-	:guest,
-	:guestnice
+	:idle
 );
 `
 )

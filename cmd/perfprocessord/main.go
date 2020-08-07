@@ -343,7 +343,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 				QueueDepth: queueDepth,
 				Systems: []string{
 					"/proc/stat",
-					"/proc/meminfo"},
+				},
 			},
 		})
 		if err != nil {
@@ -390,6 +390,8 @@ func (p *PerfCtl) handleArgs(args []string) error {
 			log.Errorf("connect: %v", err)
 			continue
 		}
+
+		log.Infof("Connected to: %v:%v/%v", v.Site, v.Host, k)
 
 		// XXX this is probably not right with a single failing command
 
@@ -503,6 +505,8 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		log.Errorf("sendAndWait connect: %v", err)
 		return err
 	}
+
+	log.Infof("Connected to: %v:%v/%v", site, host, address)
 
 	defer func() {
 		if err := p.unregister(address); err != nil {

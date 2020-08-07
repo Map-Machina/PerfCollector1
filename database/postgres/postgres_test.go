@@ -72,7 +72,7 @@ func TestPostgress(t *testing.T) {
 		t.Fatalf("got %v", runId)
 	}
 
-	// Insert 5 meminfo
+	// Insert 5 records into stat
 	for i := 0; i < 5; i++ {
 		ts := time.Now()
 		s := database.Stat{

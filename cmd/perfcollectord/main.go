@@ -71,7 +71,7 @@ type sinkStatusReply struct {
 
 	startCollection *types.PCStartCollection // Original command
 
-	measurementsUsed int // Number of unflushed measurements
+	measurementsFree int // Number of free measurement slots
 }
 
 // sinkStatus requests a status update from the sink.
@@ -204,7 +204,7 @@ func (p *PerfCollector) sink(ctx context.Context) {
 					sink:             encoder != nil,
 					measurement:      measurementC != nil,
 					startCollection:  sc,
-					measurementsUsed: cap(measurementC),
+					measurementsFree: cap(measurementC),
 				})
 
 			case measurementDrain:
@@ -468,7 +468,7 @@ func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PC
 		Cmd:     types.PCStatusCollectionCmd,
 		Payload: types.PCStatusCollectionReply{
 			StartCollection:    ss.startCollection,
-			QueueUsed:          ss.measurementsUsed,
+			QueueFree:          ss.measurementsFree,
 			SinkEnabled:        ss.sink,
 			MeasurementEnabled: ss.measurement,
 		},

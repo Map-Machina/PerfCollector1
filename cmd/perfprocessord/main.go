@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -240,7 +241,6 @@ func (p *PerfCtl) oobHandler(s *session) error {
 			status, ok := cmd.Payload.(types.PCStatusCollectionReply)
 			if ok {
 				reply = status
-				spew.Dump(reply)
 			} else {
 				// Should not happen
 				log.Errorf("type assertion error %v: %T",
@@ -274,6 +274,33 @@ func (p *PerfCtl) oobHandler(s *session) error {
 	return io.EOF
 }
 
+func parseArgs(args []string) (map[string]string, error) {
+	m := make(map[string]string, len(args))
+	for k := range args {
+		a := strings.SplitN(args[k], "=", 2)
+		if len(a) == 0 {
+			return nil, fmt.Errorf("no argument: %v", args[k])
+		}
+		a1 := a[0]
+		var a2 string
+		if len(a) > 1 {
+			a2 = a[1]
+		}
+		if _, ok := m[a1]; ok {
+			return nil, fmt.Errorf("duplicate argument: %v", a1)
+		}
+		m[a1] = a2
+	}
+	return m, nil
+}
+
+func argAsInt(arg string, args map[string]string) (int, error) {
+	if a, ok := args[arg]; ok {
+		return strconv.Atoi(a)
+	}
+	return 0, fmt.Errorf("invalid argument: %v", arg)
+}
+
 func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) error {
 	log.Tracef("singleCommand: args %v", args)
 	defer func() {
@@ -284,6 +311,12 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		return fmt.Errorf("impossible args length")
 	}
 
+	// Parse arguments
+	a, err := parseArgs(args)
+	if err != nil {
+		return err
+	}
+
 	switch args[0] {
 	case "status":
 		r, err := p.sendAndWait(ctx, s, types.PCCommand{
@@ -292,14 +325,22 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		if err != nil {
 			return err
 		}
-		log.Infof("%v", r)
+		log.Infof("%v", spew.Sdump(r))
 
 	case "start":
-		_, err := p.sendAndWait(ctx, s, types.PCCommand{
+		frequency, err := argAsInt("frequency", a)
+		if err != nil {
+			frequency = 5
+		}
+		queueDepth, err := argAsInt("depth", a)
+		if err != nil {
+			queueDepth = 1000
+		}
+		_, err = p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCStartCollectionCmd,
 			Payload: types.PCStartCollection{
-				Frequency:  5 * time.Second,
-				QueueDepth: 3, //10000,
+				Frequency:  time.Duration(frequency) * time.Second,
+				QueueDepth: queueDepth,
 				Systems: []string{
 					"/proc/stat",
 					"/proc/meminfo"},
@@ -356,7 +397,10 @@ func (p *PerfCtl) handleArgs(args []string) error {
 		eg.Go(func() error {
 			err := p.oobHandler(session)
 			if err != nil {
-				log.Errorf("handleArgs oobHandler: %v", err)
+				if err != io.EOF {
+					log.Errorf("handleArgs oobHandler: %v",
+						err)
+				}
 				cancel()
 			}
 			return err

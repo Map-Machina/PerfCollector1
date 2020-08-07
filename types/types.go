@@ -59,7 +59,7 @@ type PCStartCollection struct {
 // PCStatusCollectionReply is the status of the collection.
 type PCStatusCollectionReply struct {
 	StartCollection    *PCStartCollection // Original start collection dommand
-	QueueUsed          int                // Number of items on the queue
+	QueueFree          int                // Number of open slots on queue
 	SinkEnabled        bool               // Is the sink enabled
 	MeasurementEnabled bool               // Are measurements enabled
 }

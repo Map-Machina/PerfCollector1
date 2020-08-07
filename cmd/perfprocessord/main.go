@@ -32,6 +32,10 @@ func (te terminalError) Error() string {
 }
 
 type session struct {
+	sync.RWMutex
+	tag  uint                      // Last used tag
+	tags map[uint]chan interface{} // Tag callback
+
 	address  string
 	conn     *ssh.Client
 	channel  ssh.Channel
@@ -87,31 +91,27 @@ func (p *PerfCtl) unregisterAll() {
 
 type PerfCtl struct {
 	sync.RWMutex
+	sessions map[string]*session // Mutex is only for map insert/delete.
 
 	cfg *config
 
 	db database.Database
-
-	sessions map[string]*session // XXX ugh pointer, fix
-
-	tag  uint                      // Last used tag
-	tags map[uint]chan interface{} // Tag callback
 }
 
-func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan interface{}) error {
+func (p *PerfCtl) send(s *session, cmd types.PCCommand, callback chan interface{}) error {
 	log.Tracef("send")
 	defer log.Tracef("send exit")
 
 	// Hnadle tag
-	p.Lock()
-	tag := p.tag
-	if _, ok := p.tags[tag]; ok {
+	s.Lock()
+	tag := s.tag
+	if _, ok := s.tags[tag]; ok {
 		p.Unlock()
 		return fmt.Errorf("duplicate tag: %v", tag)
 	}
-	p.tags[tag] = callback
-	p.tag++
-	p.Unlock()
+	s.tags[tag] = callback
+	s.tag++
+	s.Unlock()
 
 	// Send OOB
 	cmd.Version = types.PCVersion // Set version
@@ -125,19 +125,19 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 
 	log.Tracef("send %v", spew.Sdump(cmd))
 
-	_, err = channel.SendRequest(types.PCCmd, false, blob)
+	_, err = s.channel.SendRequest(types.PCCmd, false, blob)
 
 	return err
 }
 
-func (p *PerfCtl) sendAndWait(ctx context.Context, channel ssh.Channel, cmd types.PCCommand) (interface{}, error) {
+func (p *PerfCtl) sendAndWait(ctx context.Context, s *session, cmd types.PCCommand) (interface{}, error) {
 	log.Tracef("sendAndWait")
 	defer log.Tracef("sendAndWait exit")
 
 	// Callback channel
 	c := make(chan interface{})
 
-	err := p.send(channel, cmd, c)
+	err := p.send(s, cmd, c)
 	if err != nil {
 		return nil, err
 	}
@@ -196,16 +196,16 @@ func (p *PerfCtl) oobHandler(s *session) error {
 			cmd.Payload)
 
 		// Free tag
-		p.Lock()
-		callback, ok := p.tags[cmd.Tag]
+		s.Lock()
+		callback, ok := s.tags[cmd.Tag]
 		if !ok {
-			p.Unlock()
+			s.Unlock()
 			log.Errorf("oobHandler unknown tag %v: %v",
 				s.address, cmd.Tag)
 			continue
 		}
-		delete(p.tags, cmd.Tag)
-		p.Unlock()
+		delete(s.tags, cmd.Tag)
+		s.Unlock()
 
 		var reply interface{}
 		switch cmd.Cmd {
@@ -258,7 +258,7 @@ func (p *PerfCtl) oobHandler(s *session) error {
 				},
 			}
 			// Send payload to server.
-			err = p.send(s.channel, reply, nil)
+			err = p.send(s, reply, nil)
 			if err != nil {
 				log.Errorf("oobHandler SendRequest %v: %v",
 					s.address, err)
@@ -285,7 +285,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 
 	switch args[0] {
 	case "status":
-		r, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
+		r, err := p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCStatusCollectionCmd,
 		})
 		if err != nil {
@@ -294,7 +294,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		log.Infof("%v", r)
 
 	case "start":
-		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCStartCollectionCmd,
 			Payload: types.PCStartCollection{
 				Frequency:  5 * time.Second,
@@ -309,7 +309,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		}
 
 	case "stop":
-		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
+		_, err := p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCStopCollectionCmd,
 		})
 		if err != nil {
@@ -410,6 +410,7 @@ func (p *PerfCtl) connect(ctx context.Context, address string) (*session, error)
 		channel:  channel,
 		requests: requests,
 		address:  address,
+		tags:     make(map[uint]chan interface{}),
 	}
 	p.register(address, session)
 
@@ -468,7 +469,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 	go p.oobHandler(s)
 
 	// Register sinkLoop.
-	_, err = p.sendAndWait(ctx, s.channel, types.PCCommand{
+	_, err = p.sendAndWait(ctx, s, types.PCCommand{
 		Cmd: types.PCRegisterSink,
 	})
 	if err != nil {
@@ -595,7 +596,6 @@ func _main() error {
 
 	p := &PerfCtl{
 		cfg:      loadedCfg,
-		tags:     make(map[uint]chan interface{}),
 		sessions: make(map[string]*session),
 	}
 

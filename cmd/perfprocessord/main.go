@@ -16,6 +16,7 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
+	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/businessperformancetuning/perfcollector/types"
 	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/davecgh/go-spew/spew"
@@ -477,7 +478,8 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		return terminalError{err: err}
 	}
 
-	run := uint64(0)
+	runID := uint64(0)
+	var previousStat *parser.Stat
 	// We are in sinkLoop mode. Register sinkLoop and process measurements.
 	dec := gob.NewDecoder(s.channel)
 	for {
@@ -487,9 +489,12 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			return fmt.Errorf("sinkLoop Decode %v:%v: %v",
 				site, host, err)
 		}
-		log.Tracef("Received record")
+
+		// XXX consider reading more than one measurement at a time and
+		// batch the writes.
+
 		if p.cfg.Journal {
-			err := p.journal(site, host, run, m)
+			err := p.journal(site, host, runID, m)
 			if err != nil {
 				return fmt.Errorf("sinkLoop journal %v:%v: %v",
 					site, host, err)
@@ -497,15 +502,32 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			continue
 		}
 
-		//// Post process
-		//switch m.System {
-		//case "/proc/stat":
-		//	s, err := parser.ProcessStat(m.Measurement)
-		//	if err != nil {
-		//		log.Errorf("could not process stat: %v", err)
-		//		continue
-		//	}
-		//	//spew.Dump(s)
+		// Post process
+		switch m.System {
+		case "/proc/stat":
+			s, err := parser.ProcessStat([]byte(m.Measurement))
+			if err != nil {
+				log.Errorf("could not process stat: %v", err)
+				continue
+			}
+			if previousStat == nil {
+				previousStat = &s
+				continue
+			}
+			cs, err := parser.CubeStat(runID, m.Timestamp.Unix(),
+				m.Start.Unix(), int64(m.Duration), previousStat,
+				&s)
+			if err != nil {
+				log.Errorf("sinkLoop CubeStat: %v", err)
+				continue
+			}
+			previousStat = &s
+
+			err = p.db.StatInsert(cs)
+			if err != nil {
+				log.Errorf("sinkLoop CubeStat: %v", err)
+			}
+			continue
 
 		//case "/proc/meminfo":
 		//	s, err := parser.ProcessMeminfo(m.Measurement)
@@ -547,9 +569,9 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		//	//// Insert net IO
 
 		//	//// Insert block IO
-		//default:
-		//	log.Errorf("unknown system: %v", m.System)
-		//}
+		default:
+			log.Errorf("unknown system: %v", m.System)
+		}
 	}
 }
 

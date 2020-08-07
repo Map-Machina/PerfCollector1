@@ -87,11 +87,25 @@ func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) 
 	return runId, nil
 }
 
-func (p *postgres) StatInsert(s *database.Stat) error {
+func (p *postgres) StatInsert(s []database.Stat) error {
 	log.Tracef("postgres.StatInsert")
 
-	_, err := p.db.NamedExec(database.InsertStat, s)
-	return err
+	// Use BeginTxx with ctx
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	for k := range s {
+		_, err = tx.NamedExec(database.InsertStat, s[k])
+		if err != nil {
+			err2 := tx.Rollback()
+			return fmt.Errorf("NamedExec: %v; Rollback: %v",
+				err, err2)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func New(name, uri string) (*postgres, error) {

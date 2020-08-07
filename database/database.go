@@ -12,7 +12,7 @@ type Database interface {
 	// Insert measurement and return fresh run id
 	MeasurementsInsert(*Measurements) (uint64, error)
 
-	StatInsert(*Stat) error // Insert stat record.
+	StatInsert([]Stat) error // Insert stat record.
 }
 
 const (

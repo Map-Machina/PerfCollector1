@@ -1,6 +1,7 @@
 package database
 
 // 12:50:56        CPU     %user     %nice   %system   %iowait    %steal     %idle
+// XXX this isn't 3rd normal form
 type Stat struct {
 	RunID uint64 // ID for this measurement
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// protocolError returns an encoded protocol error.
 func protocolError(tag uint, format string, args ...interface{}) ([]byte, error) {
 	return types.Encode(types.PCCommand{
 		Tag: tag,
@@ -29,33 +31,126 @@ func protocolError(tag uint, format string, args ...interface{}) ([]byte, error)
 	})
 }
 
+// internalError returns an encoded internal error.
+func internalError(cmd types.PCCommand, err error) ([]byte, error) {
+	t := time.Now()
+	log.Errorf("internal error cmd %v tag %v timestamp %v: %v",
+		cmd.Cmd, cmd.Tag, t.Unix(), err)
+	log.Debugf("internal error command: %v", spew.Sdump(cmd))
+	// XXX add stack trace here
+	reply, err := protocolError(cmd.Tag, "internal error: %v",
+		strconv.Itoa(int(t.Unix())))
+	if err != nil {
+		return nil, err
+	}
+	return reply, err
+}
+
 type PerfCollector struct {
 	sync.Mutex
 
 	sinkC chan interface{}
+
+	stopCollectionC chan struct{} // XXX this probably should go into the sink
 
 	cfg *config
 
 	allowedKeys map[string]struct{}
 }
 
+// sinkRegister registers the provided encoder as the sink.
 type sinkRegister struct {
 	encoder *gob.Encoder
 	replyC  chan error
 }
 
-type measurementRegister struct {
-	measurementC chan *types.PCCollection
+// sinkStatusReply is the reply to a sinkStatus request.
+type sinkStatusReply struct {
+	sink        bool // True if encoder is valid
+	measurement bool // True if measurement queue is valid
+
+	startCollection *types.PCStartCollection // Original command
+
+	measurementsUsed int // Number of unflushed measurements
 }
 
+// sinkStatus requests a status update from the sink.
+type sinkStatus struct {
+	replyC chan sinkStatusReply
+}
+
+// measurementRegister registers te provided channel as te measurement queue.
+type measurementRegister struct {
+	startCollection types.PCStartCollection
+	measurementC    chan *types.PCCollection
+}
+
+// measurementDrain instruct the sink to drain the measurement queue.
 type measurementDrain struct{}
 
-// writeE writes err non-blocking to the provided channel.
-func writeE(c chan error, err error) {
+var (
+	ErrDone        = errors.New("shutting down")
+	ErrChannelBusy = errors.New("channel busy")
+)
+
+// writeError writes err non-blocking to the provided channel.
+func writeError(c chan error, err error) error {
 	select {
 	case c <- err:
 	default:
+		return ErrChannelBusy
 	}
+	return nil
+}
+
+// writeError writes err non-blocking to the provided channel.
+func writeBool(c chan bool, b bool) error {
+	select {
+	case c <- b:
+	default:
+		return ErrChannelBusy
+	}
+	return nil
+}
+
+// writeSinkReply writes a sinStatusReply to the provided channel)
+func writeSinkStatusReply(c chan sinkStatusReply, s sinkStatusReply) error {
+	select {
+	case c <- s:
+	default:
+		return ErrChannelBusy
+	}
+	return nil
+}
+
+// getSinkStatus returns the current sink status.
+func (p *PerfCollector) getSinkStatus(ctx context.Context) (*sinkStatusReply, error) {
+	replyC := make(chan sinkStatusReply)
+	select {
+	case <-ctx.Done():
+		return nil, ErrDone
+	case p.sinkC <- sinkStatus{
+		replyC: replyC,
+	}:
+	default:
+		return nil, ErrChannelBusy
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ErrDone
+	case ss := <-replyC:
+		return &ss, nil
+	}
+}
+
+// collectorRunning return true if the collector is running.
+func (p *PerfCollector) collectorRunning(ctx context.Context) (bool, error) {
+	ss, err := p.getSinkStatus(ctx)
+	if err != nil {
+		return false, err
+	}
+	return ss.measurement, nil
 }
 
 func (p *PerfCollector) sink(ctx context.Context) {
@@ -63,8 +158,9 @@ func (p *PerfCollector) sink(ctx context.Context) {
 	defer log.Tracef("sink exit")
 
 	var (
-		encoder      *gob.Encoder
-		measurementC chan *types.PCCollection
+		encoder         *gob.Encoder
+		measurementC    chan *types.PCCollection
+		startCollection types.PCStartCollection
 	)
 
 	for {
@@ -83,19 +179,33 @@ func (p *PerfCollector) sink(ctx context.Context) {
 				log.Tracef("sink: sinkRegister %p", c.encoder)
 				if encoder != nil && c.encoder != nil {
 					log.Tracef("sink: sink already registered")
-					writeE(c.replyC,
+					writeError(c.replyC,
 						fmt.Errorf("sink already registered"))
 				} else {
 					encoder = c.encoder
-					writeE(c.replyC, nil)
+					writeError(c.replyC, nil)
 				}
 				continue
 
 			case measurementRegister:
 				log.Tracef("sink: measurementRegister %p",
 					c.measurementC)
+				startCollection = c.startCollection
 				measurementC = c.measurementC
 				continue
+
+			case sinkStatus:
+				var sc *types.PCStartCollection
+				if measurementC != nil {
+					scCopy := startCollection
+					sc = &scCopy
+				}
+				writeSinkStatusReply(c.replyC, sinkStatusReply{
+					sink:             encoder != nil,
+					measurement:      measurementC != nil,
+					startCollection:  sc,
+					measurementsUsed: cap(measurementC),
+				})
 
 			case measurementDrain:
 				if encoder == nil {
@@ -160,9 +270,7 @@ func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Chan
 		panic("shouldn't happen")
 	}
 
-	log.Tracef("handleRegisterSink: waintig for err")
 	err := <-replyC
-	log.Tracef("handleRegisterSink: waintig for err %v", err)
 	if err != nil {
 		reply, err := protocolError(cmd.Tag, "command %v: %v",
 			cmd.Cmd, err)
@@ -174,11 +282,10 @@ func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Chan
 		Tag:     cmd.Tag,
 		Cmd:     types.PCAck,
 	})
-	log.Tracef("handleRegisterSink: ERROR: %v", err)
+
 	var callback func()
 	if err == nil {
-		// Unregister callback
-		log.Tracef("handleRegisterSink: setting callback")
+		// Set unregister callback
 		callback = func() {
 			log.Tracef("handleRegisterSink: unregister callback")
 			select {
@@ -199,20 +306,35 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 	log.Tracef("startCollection %v", sc.Frequency)
 	defer log.Tracef("startCollection %v exit", sc.Frequency)
 
-	//// Message new measurements channel
+	// Message new measurements channel
 	measurements := make(chan *types.PCCollection, sc.QueueDepth)
 	select {
-	case p.sinkC <- measurementRegister{measurementC: measurements}:
+	case p.sinkC <- measurementRegister{
+		startCollection: sc,
+		measurementC:    measurements,
+	}:
 	default:
 		// XXX This can happen due to the drain. We need some sort of retry here.
 		panic("should not happen")
 	}
 
-	//p.setCollectionEnabled(&sc)
+	p.stopCollectionC = make(chan struct{})
 
 	t := time.Tick(sc.Frequency) // XXX Replace this with an elapsed time counter
 	for {
 		select {
+		case <-p.stopCollectionC:
+			select {
+			case p.sinkC <- measurementRegister{
+				measurementC: nil,
+			}:
+			default:
+				// XXX This can happen due to the drain. We need some sort of retry here.
+				panic("should not happen")
+			}
+			p.stopCollectionC = nil
+			return
+
 		case <-ctx.Done():
 			return
 		case <-t:
@@ -220,7 +342,6 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 			//	return
 			//}
 
-			var err error
 			timestamp := time.Now()
 			for _, v := range sc.Systems {
 				m := types.PCCollection{
@@ -229,12 +350,13 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 					Start:     time.Now(), // This timestamp
 				}
 
-				m.Measurement, err = util.Measure(v)
+				blob, err := util.Measure(v)
 				if err != nil {
 					log.Errorf("startCollection: %v", err)
 					// Abort measurement.
 					continue
 				}
+				m.Measurement = string(blob)
 
 				m.Duration = time.Now().Sub(m.Timestamp)
 
@@ -285,12 +407,42 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 	}
 
 	// Only allow one collection to run.
-	//if p.getCollectionEnabled() != nil {
-	//	return protocolError(cmd.Tag, "collector already running")
-	//}
+	cr, err := p.collectorRunning(ctx)
+	if err != nil {
+		return internalError(cmd, err)
+	}
+	if cr {
+		return protocolError(cmd.Tag, "collector already running")
+	}
 
-	//p.stopCollection = make(chan struct{})
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCAck,
+	}
 	go p.startCollection(ctx, sc)
+
+	// Ack remote.
+	return types.Encode(reply)
+}
+
+func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleStopCollection %v", cmd.Cmd)
+	defer log.Tracef("handleStopCollection %v exit", cmd.Cmd)
+
+	if cmd.Payload != nil {
+		return protocolError(cmd.Tag, "invalid stop collector payload")
+	}
+
+	cr, err := p.collectorRunning(ctx)
+	if err != nil {
+		return internalError(cmd, err)
+	}
+	if !cr {
+		return protocolError(cmd.Tag, "collector not running")
+	}
+
+	close(p.stopCollectionC)
 
 	// Ack remote.
 	reply := types.PCCommand{
@@ -298,6 +450,30 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 		Tag:     cmd.Tag,
 		Cmd:     types.PCAck,
 	}
+	return types.Encode(reply)
+}
+
+func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleStatusCollection %v", cmd.Cmd)
+	defer log.Tracef("handleStatusCollection %v exit", cmd.Cmd)
+
+	ss, err := p.getSinkStatus(ctx)
+	if err != nil {
+		return internalError(cmd, err)
+	}
+
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCStatusCollectionCmd,
+		Payload: types.PCStatusCollectionReply{
+			StartCollection:    ss.startCollection,
+			QueueUsed:          ss.measurementsUsed,
+			SinkEnabled:        ss.sink,
+			MeasurementEnabled: ss.measurement,
+		},
+	}
+
 	return types.Encode(reply)
 }
 
@@ -365,14 +541,15 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 		//case types.PCCollectOnceCmd:
 		//	reply, err = p.handleOnce(cmd)
 
-		//case types.PCStatusCollectionCmd:
-		//	reply, err = p.handleStatusCollection(ctx, cmd, channel)
+		case types.PCStatusCollectionCmd:
+			reply, err = p.handleStatusCollection(ctx, cmd, channel)
 
 		case types.PCStartCollectionCmd:
 			reply, err = p.handleStartCollection(ctx, cmd, channel)
 
-		//case types.PCStopCollectionCmd:
-		//	reply, err = p.handleStopCollection(ctx, cmd, channel)
+		case types.PCStopCollectionCmd:
+			// XXX doesnt work
+			reply, err = p.handleStopCollection(ctx, cmd, channel)
 
 		default:
 			reply, err = protocolError(cmd.Tag, "unknown OOB "+
@@ -381,16 +558,12 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 
 		// Deal with internal errors
 		if err != nil {
-			t := time.Now()
-			log.Errorf("oobHandler internal error cmd %v tag %v "+
-				"timestamp %v: %v",
-				cmd.Cmd, cmd.Tag, t.Unix(), err)
-			log.Debugf("oobHandler internal error command: %v",
-				spew.Sdump(cmd))
-			reply, err = protocolError(cmd.Tag, "internal "+
-				"error: %v", strconv.Itoa(int(t.Unix())))
-			if err != nil {
-				log.Errorf("oobHandler encode: %v", err)
+			var errPanic error
+			reply, errPanic = internalError(cmd, err)
+			if errPanic != nil {
+				// If we don't reply the client will hang.
+				panic(fmt.Sprintf("err: %v; errPanic %v",
+					err, errPanic))
 			}
 		}
 

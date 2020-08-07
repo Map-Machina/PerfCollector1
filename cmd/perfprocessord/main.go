@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -117,14 +118,14 @@ func (p *PerfCtl) send(channel ssh.Channel, cmd types.PCCommand, callback chan i
 	cmd.Tag = tag                 // Set tag
 
 	// Do expensive encode first
-	reply, err := types.Encode(cmd)
+	blob, err := types.Encode(cmd)
 	if err != nil {
 		return nil
 	}
 
 	log.Tracef("send %v", spew.Sdump(cmd))
 
-	_, err = channel.SendRequest(types.PCCmd, false, reply)
+	_, err = channel.SendRequest(types.PCCmd, false, blob)
 
 	return err
 }
@@ -141,19 +142,21 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, channel ssh.Channel, cmd type
 		return nil, err
 	}
 
-	var reply interface{}
 	select {
 	case <-ctx.Done():
 		return nil, fmt.Errorf("sendAndWait abnormal termination")
-	case reply = <-c:
-	}
+	case reply, ok := <-c:
+		if !ok {
+			return nil, fmt.Errorf("sendAndWait channel closed")
+		}
 
-	// Check to see if we got an error
-	if e, ok := reply.(error); ok {
-		return nil, e
-	}
+		// Check to see if we got an error
+		if e, ok := reply.(error); ok {
+			return nil, e
+		}
 
-	return reply, nil
+		return reply, nil
+	}
 }
 
 func (p *PerfCtl) oobHandler(s *session) error {
@@ -189,7 +192,9 @@ func (p *PerfCtl) oobHandler(s *session) error {
 			continue
 		}
 
-		log.Tracef("oobHandler tag %v: %v", s.address, cmd.Tag)
+		log.Tracef("oobHandler tag %v: %v %T", s.address, cmd.Tag,
+			cmd.Payload)
+
 		// Free tag
 		p.Lock()
 		callback, ok := p.tags[cmd.Tag]
@@ -280,12 +285,13 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 
 	switch args[0] {
 	case "status":
-		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
+		r, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
 			Cmd: types.PCStatusCollectionCmd,
 		})
 		if err != nil {
 			return err
 		}
+		log.Infof("%v", r)
 
 	case "start":
 		_, err := p.sendAndWait(ctx, s.channel, types.PCCommand{
@@ -416,15 +422,28 @@ func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection
 			measurement.System)
 	}
 
-	dir := filepath.Join(p.cfg.DataDir, strconv.Itoa(int(site)),
-		strconv.Itoa(int(host)), strconv.Itoa(int(run)))
+	filename := filepath.Join(p.cfg.DataDir, strconv.Itoa(int(site)),
+		strconv.Itoa(int(host)), strconv.Itoa(int(run)), measurement.System)
+	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
 	if err != nil {
 		return err
 	}
 
 	// Journal in JSON to remain human readability.
-	panic("implement me")
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+		0640)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Create encoder
+	e := json.NewEncoder(f)
+	err = e.Encode(measurement)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

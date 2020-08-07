@@ -9,6 +9,8 @@ import (
 const (
 	PCVersion = 1 // Protocol version.
 
+	//XXX these string commands are overloaded. Is that ok?
+
 	// Command identifiers
 	PCCmd                 = "cmd"              // Generic encapsulating command
 	PCAck                 = "ack"              // Acknowledge command
@@ -54,19 +56,12 @@ type PCStartCollection struct {
 	QueueDepth int           // Max measurements before spilling
 }
 
-// PCSinkStatus is the current status of the sink thread.
-type PCSinkStatus struct {
-	QueueUsed          int  // Number of items on the queue
-	SinkEnabled        bool // Is the sink enabled
-	MeasurementEnabled bool // Are measurements enabled
-}
-
 // PCStatusCollectionReply is the status of the collection.
 type PCStatusCollectionReply struct {
-	Frequency  time.Duration // Frequency of the collection
-	Systems    []string      // Systems that are being polled
-	QueueDepth int           // Max measurements before spilling
-	SinkStatus PCSinkStatus  // Sink status
+	StartCollection    *PCStartCollection // Original start collection dommand
+	QueueUsed          int                // Number of items on the queue
+	SinkEnabled        bool               // Is the sink enabled
+	MeasurementEnabled bool               // Are measurements enabled
 }
 
 // PCCollection is a raw measurement that is sunk into the network.
@@ -75,7 +70,7 @@ type PCCollection struct {
 	Start       time.Time     // Start time of *this* collection
 	Duration    time.Duration // Time collection took
 	System      string        // System tha was measured
-	Measurement []byte        // Raw measurement
+	Measurement string        // Raw measurement
 }
 
 // Encode encodes an interface with gob. This should only be called with types

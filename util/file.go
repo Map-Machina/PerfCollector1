@@ -9,7 +9,7 @@ import (
 )
 
 // FilesExists reports whether the named file or directory exists.
-func FileExists(name string) bool {
+func fileExists(name string) bool {
 	if _, err := os.Stat(name); err != nil {
 		if os.IsNotExist(err) {
 			return false
@@ -20,7 +20,7 @@ func FileExists(name string) bool {
 
 func SupportedSystem(s string) bool {
 	switch s {
-	case "stat":
+	case "stat", "meminfo", "net/dev", "diskstats":
 		return true
 	}
 	return false
@@ -31,7 +31,7 @@ func ValidSystem(s string) bool {
 	if !strings.HasPrefix(path, "/proc/") {
 		return false
 	}
-	return FileExists(path)
+	return fileExists(path)
 }
 
 func Measure(s string) ([]byte, error) {

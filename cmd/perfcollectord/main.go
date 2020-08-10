@@ -369,7 +369,7 @@ func (p *PerfCollector) handleStartCollection(ctx context.Context, cmd types.PCC
 
 	// Verify that all systems exist.
 	for _, v := range sc.Systems {
-		if util.FileExists(v) {
+		if util.ValidSystem(v) {
 			continue
 		}
 		return protocolError(cmd.Tag, "invalid system %v", v)
@@ -518,7 +518,6 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 			reply, err = p.handleStartCollection(ctx, cmd, channel)
 
 		case types.PCStopCollectionCmd:
-			// XXX doesnt work
 			reply, err = p.handleStopCollection(ctx, cmd, channel)
 
 		default:

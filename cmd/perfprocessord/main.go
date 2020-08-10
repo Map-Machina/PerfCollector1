@@ -149,6 +149,12 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, s *session, cmd types.PCComma
 	if readErr != nil {
 		return nil, readErr
 	}
+
+	// See if we got a remote error back.
+	if r, ok := reply.(error); ok {
+		return nil, r
+	}
+
 	return reply, nil
 }
 
@@ -265,6 +271,45 @@ func (p *PerfCtl) oobHandler(s *session) error {
 	return io.EOF
 }
 
+func (p *PerfCtl) connect(ctx context.Context, address string) (*session, error) {
+	log.Tracef("connect: %v", address)
+	defer log.Tracef("connect exit: %v", address)
+
+	pk, err := util.PublicKeyFile(p.cfg.SSHKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	config := &ssh.ClientConfig{
+		Auth: []ssh.AuthMethod{pk},
+		//HostKeyCallback: ssh.FixedHostKey(hostKey),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // XXX security issue
+		Timeout:         5 * time.Second,
+	}
+
+	// Connect to ssh server
+	conn, err := ssh.Dial("tcp", address, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Setup channel.
+	channel, requests, err := conn.OpenChannel(types.PCChannel, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	session := &session{
+		conn:     conn,
+		channel:  channel,
+		requests: requests,
+		address:  address,
+		tags:     make(map[uint]chan interface{}),
+	}
+	p.register(address, session)
+
+	return session, nil
+}
+
 func parseArgs(args []string) (map[string]string, error) {
 	m := make(map[string]string, len(args))
 	for k := range args {
@@ -290,6 +335,14 @@ func argAsInt(arg string, args map[string]string) (int, error) {
 		return strconv.Atoi(a)
 	}
 	return 0, fmt.Errorf("invalid argument: %v", arg)
+}
+
+func argAsStringSlice(arg string, args map[string]string) ([]string, error) {
+	if a, ok := args[arg]; ok {
+		val := strings.Split(a, ",")
+		return val, nil
+	}
+	return nil, fmt.Errorf("invalid argument: %v", arg)
 }
 
 func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) error {
@@ -327,14 +380,21 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		if err != nil {
 			queueDepth = 1000
 		}
+		systems, err := argAsStringSlice("systems", a)
+		if err != nil {
+			systems = []string{
+				"/proc/stat",
+				"/proc/meminfo",
+				"/proc/net/dev",
+				"/proc/diskstats",
+			}
+		}
 		_, err = p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCStartCollectionCmd,
 			Payload: types.PCStartCollection{
 				Frequency:  time.Duration(frequency) * time.Second,
 				QueueDepth: queueDepth,
-				Systems: []string{
-					"/proc/stat",
-				},
+				Systems:    systems,
 			},
 		})
 		if err != nil {
@@ -414,45 +474,6 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	eg.Wait()
 
 	return nil
-}
-
-func (p *PerfCtl) connect(ctx context.Context, address string) (*session, error) {
-	log.Tracef("connect: %v", address)
-	defer log.Tracef("connect exit: %v", address)
-
-	pk, err := util.PublicKeyFile(p.cfg.SSHKeyFile)
-	if err != nil {
-		return nil, err
-	}
-	config := &ssh.ClientConfig{
-		Auth: []ssh.AuthMethod{pk},
-		//HostKeyCallback: ssh.FixedHostKey(hostKey),
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // XXX security issue
-		Timeout:         5 * time.Second,
-	}
-
-	// Connect to ssh server
-	conn, err := ssh.Dial("tcp", address, config)
-	if err != nil {
-		return nil, err
-	}
-
-	// Setup channel.
-	channel, requests, err := conn.OpenChannel(types.PCChannel, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	session := &session{
-		conn:     conn,
-		channel:  channel,
-		requests: requests,
-		address:  address,
-		tags:     make(map[uint]chan interface{}),
-	}
-	p.register(address, session)
-
-	return session, nil
 }
 
 func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {

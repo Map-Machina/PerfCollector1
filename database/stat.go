@@ -1,7 +1,7 @@
 package database
 
-// 12:50:56        CPU     %user     %nice   %system   %iowait    %steal     %idle
-// XXX this isn't 3rd normal form
+// Stat is the result of cubin data that is being stored in the database. The
+// unique key is RunID, Timestamp and CPU.
 type Stat struct {
 	RunID uint64 // ID for this measurement
 

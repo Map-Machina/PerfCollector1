@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	ch "github.com/businessperformancetuning/perfcollector/channel"
 	"github.com/businessperformancetuning/perfcollector/types"
 	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/davecgh/go-spew/spew"
@@ -88,60 +88,23 @@ type measurementRegister struct {
 // measurementDrain instruct the sink to drain the measurement queue.
 type measurementDrain struct{}
 
-var (
-	ErrDone        = errors.New("shutting down")
-	ErrChannelBusy = errors.New("channel busy")
-)
-
-// writeError writes err non-blocking to the provided channel.
-func writeError(c chan error, err error) error {
-	select {
-	case c <- err:
-	default:
-		return ErrChannelBusy
-	}
-	return nil
-}
-
-// writeError writes err non-blocking to the provided channel.
-func writeBool(c chan bool, b bool) error {
-	select {
-	case c <- b:
-	default:
-		return ErrChannelBusy
-	}
-	return nil
-}
-
-// writeSinkReply writes a sinStatusReply to the provided channel)
-func writeSinkStatusReply(c chan sinkStatusReply, s sinkStatusReply) error {
-	select {
-	case c <- s:
-	default:
-		return ErrChannelBusy
-	}
-	return nil
-}
-
 // getSinkStatus returns the current sink status.
 func (p *PerfCollector) getSinkStatus(ctx context.Context) (*sinkStatusReply, error) {
 	replyC := make(chan sinkStatusReply)
-	select {
-	case <-ctx.Done():
-		return nil, ErrDone
-	case p.sinkC <- sinkStatus{
+	err := ch.Write(ctx, p.sinkC, sinkStatus{
 		replyC: replyC,
-	}:
-	default:
-		return nil, ErrChannelBusy
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	select {
-	case <-ctx.Done():
-		return nil, ErrDone
-	case ss := <-replyC:
-		return &ss, nil
+	ssr, err := ch.Read(ctx, replyC)
+	if err != nil {
+		return nil, err
 	}
+	//log.Errorf("%T", ssr)
+	s := ssr.(sinkStatusReply)
+	return &s, nil
 }
 
 // collectorRunning return true if the collector is running.
@@ -179,11 +142,11 @@ func (p *PerfCollector) sink(ctx context.Context) {
 				log.Tracef("sink: sinkRegister %p", c.encoder)
 				if encoder != nil && c.encoder != nil {
 					log.Tracef("sink: sink already registered")
-					writeError(c.replyC,
+					ch.WriteNB(ctx, c.replyC,
 						fmt.Errorf("sink already registered"))
 				} else {
 					encoder = c.encoder
-					writeError(c.replyC, nil)
+					ch.WriteNB(ctx, c.replyC, nil)
 				}
 				continue
 
@@ -200,7 +163,7 @@ func (p *PerfCollector) sink(ctx context.Context) {
 					scCopy := startCollection
 					sc = &scCopy
 				}
-				writeSinkStatusReply(c.replyC, sinkStatusReply{
+				ch.WriteNB(ctx, c.replyC, sinkStatusReply{
 					sink:             encoder != nil,
 					measurement:      measurementC != nil,
 					startCollection:  sc,
@@ -254,26 +217,27 @@ func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicK
 	return &ssh.Permissions{}, nil
 }
 
-func (p *PerfCollector) handleRegisterSink(cmd types.PCCommand, channel ssh.Channel) (func(), []byte, error) {
+func (p *PerfCollector) handleRegisterSink(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) (func(), []byte, error) {
 	log.Tracef("handleRegisterSink %v", cmd.Tag)
 	defer log.Tracef("handleRegisterSink %v exit", cmd.Tag)
 
+	// Instruct sink to register gob encoder.
 	replyC := make(chan error)
-
-	select {
-	case p.sinkC <- sinkRegister{
+	if err := ch.Write(ctx, p.sinkC, sinkRegister{
 		encoder: gob.NewEncoder(channel),
 		replyC:  replyC,
-	}:
-	default:
-		// XXX This can happen due to the drain. We need some sort of retry here.
-		panic("shouldn't happen")
+	}); err != nil {
+		return nil, nil, err
 	}
 
-	err := <-replyC
-	if err != nil {
+	// Non-block read of sink reply.
+	err2, readErr := ch.Read(ctx, replyC)
+	if readErr != nil {
+		return nil, nil, readErr
+	}
+	if err2 != nil {
 		reply, err := protocolError(cmd.Tag, "command %v: %v",
-			cmd.Cmd, err)
+			cmd.Cmd, err2)
 		return nil, reply, err
 	}
 
@@ -533,7 +497,8 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 			// Commands that require ack
 		case types.PCRegisterSink:
 			var callback func()
-			callback, reply, err = p.handleRegisterSink(cmd, channel)
+			callback, reply, err = p.handleRegisterSink(ctx, cmd,
+				channel)
 			if callback != nil {
 				// Unregister on exit.
 				defer callback()

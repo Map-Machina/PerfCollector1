@@ -633,17 +633,29 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 
 			err = p.db.StatInsert(cs)
 			if err != nil {
-				log.Errorf("sinkLoop CubeStat: %v", err)
+				log.Errorf("sinkLoop CubeStat insert: %v", err)
 			}
 			continue
 
-		//case "/proc/meminfo":
-		//	s, err := parser.ProcessMeminfo(m.Measurement)
-		//	if err != nil {
-		//		log.Errorf("could not process meminfo: %v", err)
-		//		continue
-		//	}
-		//	//spew.Dump(s)
+		case "/proc/meminfo":
+			s, err := parser.ProcessMeminfo([]byte(m.Measurement))
+			if err != nil {
+				log.Errorf("could not process meminfo: %v", err)
+				continue
+			}
+			mi, err := parser.CubeMeminfo(runID, m.Timestamp.Unix(),
+				m.Start.Unix(), int64(m.Duration), &s)
+			if err != nil {
+				log.Errorf("sinkLoop CubeMeminfo: %v", err)
+				continue
+			}
+			//err = p.db.MemInsert(mi)
+			//if err != nil {
+			//	log.Errorf("sinkLoop CubeMeminfo insert: %v",
+			//		err)
+			//}
+			spew.Dump(mi)
+			continue
 
 		//	//// Insert runid
 		//	//m := database.Measurements{

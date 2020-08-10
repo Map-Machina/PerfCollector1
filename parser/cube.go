@@ -126,3 +126,33 @@ func CubeStat(runID uint64, timestamp, start, duration int64, t1, t2 *Stat) ([]d
 
 	return s, nil
 }
+
+func CubeMeminfo(runID uint64, timestamp, start, duration int64, mi *Meminfo) (*database.Meminfo, error) {
+	// kbmemfree   kbavail kbmemused  %memused kbbuffers  kbcached  kbcommit   %commit  kbactive   kbinact   kbdirty
+
+	// nousedmem = smc->frmkb + smc->bufkb + smc->camkb + smc->slabkb;
+	// if (nousedmem > smc->tlmkb) {
+	//	nousedmem = smc->tlmkb;
+	// }
+
+	var usedMem uint64
+	usedMem = mi.MemFree + mi.Buffers + mi.Cached + mi.Slab
+	if usedMem > mi.MemTotal {
+		usedMem = mi.MemTotal
+	}
+	return &database.Meminfo{
+		MemFree:      mi.MemFree,
+		MemAvailable: mi.MemAvailable,
+		MemUsed:      mi.MemTotal - usedMem,
+		PercentUsed: float64(mi.MemTotal-usedMem) /
+			float64(mi.MemTotal) * 100,
+		Buffers: mi.Buffers,
+		Cached:  mi.Cached,
+		Commit:  mi.CommittedAS,
+		PercentCommit: float64(mi.CommittedAS) /
+			float64(mi.MemTotal+mi.SwapTotal) * 100,
+		Active:   mi.Active,
+		Inactive: mi.Inactive,
+		Dirty:    mi.Dirty,
+	}, nil
+}

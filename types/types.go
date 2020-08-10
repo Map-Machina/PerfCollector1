@@ -9,18 +9,21 @@ import (
 const (
 	PCVersion = 1 // Protocol version.
 
-	//XXX these string commands are overloaded. Is that ok?
-
 	// Command identifiers
-	PCCmd                 = "cmd"              // Generic encapsulating command
-	PCAck                 = "ack"              // Acknowledge command
-	PCErrorCmd            = "error"            // Error reply to a command
-	PCCollectOnceCmd      = "collectonce"      // Collect one measurement
-	PCCollectOnceReplyCmd = "collectoncereply" // Reply to collect once
-	PCStatusCollectionCmd = "statuscollection" // Collection status
-	PCStartCollectionCmd  = "startcollection"  // Start collecting measurements
-	PCStopCollectionCmd   = "stopcollection"   // Stop collecting measurements
-	PCRegisterSink        = "registersink"     // Register a sink
+	PCCmd      = "cmd"   // Generic encapsulating command
+	PCAck      = "ack"   // Acknowledge for commands that don't have a reply
+	PCErrorCmd = "error" // Error reply to a command
+
+	// Commands that have a reply.
+	PCCollectOnceCmd           = "collectonce"           // Collect one measurement
+	PCCollectOnceReplyCmd      = "collectoncereply"      // Reply to collect once
+	PCStatusCollectionCmd      = "statuscollection"      // Collection status
+	PCStatusCollectionReplyCmd = "statuscollectionreply" // Collection status reply
+
+	// Commands that do not have a reply.
+	PCStartCollectionCmd = "startcollection" // Start collecting measurements
+	PCStopCollectionCmd  = "stopcollection"  // Stop collecting measurements
+	PCRegisterSinkCmd    = "registersink"    // Register a sink
 
 	PCChannel = "collector" // SSH channel name
 )

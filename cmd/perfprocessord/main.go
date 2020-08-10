@@ -234,7 +234,7 @@ func (p *PerfCtl) oobHandler(s *session) error {
 					s.address, cmd.Payload)
 			}
 
-		case types.PCStatusCollectionCmd:
+		case types.PCStatusCollectionReplyCmd:
 			status, ok := cmd.Payload.(types.PCStatusCollectionReply)
 			if ok {
 				reply = status
@@ -578,7 +578,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 
 	// Register sinkLoop.
 	_, err = p.sendAndWait(ctx, s, types.PCCommand{
-		Cmd: types.PCRegisterSink,
+		Cmd: types.PCRegisterSinkCmd,
 	})
 	if err != nil {
 		log.Errorf("sendAndWait connect: %v", err)

@@ -434,7 +434,7 @@ func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PC
 	reply := types.PCCommand{
 		Version: types.PCVersion,
 		Tag:     cmd.Tag,
-		Cmd:     types.PCStatusCollectionCmd,
+		Cmd:     types.PCStatusCollectionReplyCmd,
 		Payload: types.PCStatusCollectionReply{
 			StartCollection:    ss.startCollection,
 			QueueFree:          ss.measurementsFree,
@@ -534,7 +534,7 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 			continue
 
 			// Commands that require ack
-		case types.PCRegisterSink:
+		case types.PCRegisterSinkCmd:
 			var callback func()
 			callback, reply, err = p.handleRegisterSink(ctx, cmd,
 				channel)

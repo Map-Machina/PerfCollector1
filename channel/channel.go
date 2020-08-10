@@ -27,13 +27,20 @@ func isChanInterface(c interface{}) bool {
 }
 
 func WriteNB(ctx context.Context, c interface{}, payload interface{}) error {
+	// Deal with nil values.
+	val := reflect.ValueOf(payload)
+	if payload == nil {
+		typ := reflect.TypeOf(c).Elem()
+		val = reflect.Zero(typ)
+	}
+
 	cases := []reflect.SelectCase{{
 		Dir:  reflect.SelectRecv,
 		Chan: reflect.ValueOf(ctx.Done()),
 	}, {
 		Dir:  reflect.SelectSend,
 		Chan: reflect.ValueOf(c),
-		Send: reflect.ValueOf(payload),
+		Send: val,
 	}, {
 		Dir: reflect.SelectDefault,
 	}}
@@ -52,13 +59,20 @@ func WriteNB(ctx context.Context, c interface{}, payload interface{}) error {
 }
 
 func Write(ctx context.Context, c interface{}, payload interface{}) error {
+	// Deal with nil values.
+	val := reflect.ValueOf(payload)
+	if payload == nil {
+		typ := reflect.TypeOf(c).Elem()
+		val = reflect.Zero(typ)
+	}
+
 	cases := []reflect.SelectCase{{
 		Dir:  reflect.SelectRecv,
 		Chan: reflect.ValueOf(ctx.Done()),
 	}, {
 		Dir:  reflect.SelectSend,
 		Chan: reflect.ValueOf(c),
-		Send: reflect.ValueOf(payload),
+		Send: val,
 	}}
 
 	chosen, _, _ := reflect.Select(cases)
@@ -89,7 +103,40 @@ func Read(ctx context.Context, c interface{}) (interface{}, error) {
 		if !recvOK {
 			return nil, ErrUnexpectedClose
 		}
+		if !recv.IsValid() && recv.IsZero() {
+			return nil, nil
+		}
 		return recv.Interface(), nil
+	default:
+		panic("unreachable")
+	}
+}
+
+func ReadNB(ctx context.Context, c interface{}) (interface{}, error) {
+	cases := []reflect.SelectCase{{
+		Dir:  reflect.SelectRecv,
+		Chan: reflect.ValueOf(ctx.Done()),
+	}, {
+		Dir:  reflect.SelectRecv,
+		Chan: reflect.ValueOf(c),
+	}, {
+		Dir: reflect.SelectDefault,
+	}}
+
+	chosen, recv, recvOK := reflect.Select(cases)
+	switch chosen {
+	case 0:
+		return nil, ErrDone //ctx.Err()
+	case 1:
+		if !recvOK {
+			return nil, ErrUnexpectedClose
+		}
+		if !recv.IsValid() && recv.IsZero() {
+			return nil, nil
+		}
+		return recv.Interface(), nil
+	case 2:
+		return nil, ErrChannelBusy
 	default:
 		panic("unreachable")
 	}

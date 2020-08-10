@@ -542,6 +542,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		// batch the writes.
 
 		if p.cfg.Journal {
+			log.Tracef("sinkLoop journal: %v", m.System)
 			err := p.journal(site, host, runID, m)
 			if err != nil {
 				return fmt.Errorf("sinkLoop journal %v:%v: %v",

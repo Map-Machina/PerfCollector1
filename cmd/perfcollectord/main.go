@@ -127,7 +127,7 @@ func (p *PerfCollector) sink(ctx context.Context) {
 	)
 
 	for {
-	done:
+	restart:
 		log.Tracef("sink loop")
 		select {
 		case <-ctx.Done():
@@ -164,33 +164,43 @@ func (p *PerfCollector) sink(ctx context.Context) {
 					sc = &scCopy
 				}
 				ch.WriteNB(ctx, c.replyC, sinkStatusReply{
-					sink:             encoder != nil,
-					measurement:      measurementC != nil,
-					startCollection:  sc,
-					measurementsFree: cap(measurementC),
+					sink:            encoder != nil,
+					measurement:     measurementC != nil,
+					startCollection: sc,
+					measurementsFree: cap(measurementC) -
+						len(measurementC),
 				})
 
 			case measurementDrain:
 				if encoder == nil {
-					log.Tracef("sink: measurementDrain: no encoder")
+					log.Tracef("sink: measurementDrain: "+
+						"no encoder %v",
+						len(measurementC))
 					continue
 				}
 				if measurementC == nil {
-					log.Tracef("sink: measurementDrain: no channel")
+					log.Tracef("sink: measurementDrain: " +
+						"no channel")
 					continue
 				}
+				// XXX this code needs to come out.
+				// Queue measurement and drain elsewhere.
 				for {
-					var m *types.PCCollection
-					select {
-					case m = <-measurementC:
-					default:
-						log.Tracef("len %v", len(measurementC))
-						goto done
+					m, err := ch.ReadNB(ctx, measurementC)
+					if err == ch.ErrChannelBusy {
+						log.Tracef("sink ReadNB: %v",
+							err)
+						goto restart
+					} else if err != nil {
+						log.Errorf("sink ReadNB: %v",
+							err)
+						goto restart
 					}
 					log.Tracef("Sent measurement")
-					err := encoder.Encode(m)
+					err = encoder.Encode(m)
 					if err != nil {
-						log.Errorf("sink encoder: %v", err)
+						log.Errorf("sink encoder: %v",
+							err)
 						encoder = nil
 						continue
 					}
@@ -252,13 +262,12 @@ func (p *PerfCollector) handleRegisterSink(ctx context.Context, cmd types.PCComm
 		// Set unregister callback
 		callback = func() {
 			log.Tracef("handleRegisterSink: unregister callback")
-			select {
-			case p.sinkC <- sinkRegister{
+			err := ch.Write(ctx, p.sinkC, sinkRegister{
 				encoder: nil,
-			}:
-			default:
-				// XXX This can happen due to the drain. We need some sort of retry here.
-				panic("shouldn't happen")
+			})
+			if err != nil {
+				log.Errorf("handleRegisterSink unregister: %v",
+					err)
 			}
 		}
 	}
@@ -272,14 +281,13 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 
 	// Message new measurements channel
 	measurements := make(chan *types.PCCollection, sc.QueueDepth)
-	select {
-	case p.sinkC <- measurementRegister{
+	err := ch.Write(ctx, p.sinkC, measurementRegister{
 		startCollection: sc,
 		measurementC:    measurements,
-	}:
-	default:
-		// XXX This can happen due to the drain. We need some sort of retry here.
-		panic("should not happen")
+	})
+	if err != nil {
+		log.Errorf("startCollection Write: %v", err)
+		return
 	}
 
 	p.stopCollectionC = make(chan struct{})
@@ -287,25 +295,19 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 	t := time.Tick(sc.Frequency) // XXX Replace this with an elapsed time counter
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-p.stopCollectionC:
-			select {
-			case p.sinkC <- measurementRegister{
+			err := ch.Write(ctx, p.sinkC, measurementRegister{
 				measurementC: nil,
-			}:
-			default:
-				// XXX This can happen due to the drain. We need some sort of retry here.
-				panic("should not happen")
+			})
+			if err != nil {
+				log.Errorf("startCollection Write2: %v", err)
 			}
 			p.stopCollectionC = nil
 			return
 
-		case <-ctx.Done():
-			return
 		case <-t:
-			//case <-p.stopCollection:
-			//	return
-			//}
-
 			timestamp := time.Now()
 			for _, v := range sc.Systems {
 				m := types.PCCollection{
@@ -325,23 +327,26 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 				m.Duration = time.Now().Sub(m.Timestamp)
 
 				// Spill last measurement if queue depth is reached
-				select {
-				case measurements <- &m:
-					log.Tracef("startCollection: recording %v", v)
-
-				default:
-					log.Tracef("startCollection: spill %v",
+				err = ch.WriteNB(ctx, measurements, &m)
+				if err != nil && err == ch.ErrChannelBusy {
+					log.Tracef("startCollection spill: %v",
 						len(measurements))
+				} else if err != nil {
+					// This may be fatal but let ctx deal
+					// with that.
+					log.Errorf("startCollection WriteNB: %v",
+						err)
 				}
-
 			}
 			// Signal once that there are measurements to drain.
 			// XXX think about always draining. This may not be a
-			// good idea when we are polling performance every second.
-			select {
-			case p.sinkC <- measurementDrain{}:
-			default:
-				log.Tracef("measurementDrain signal failed")
+			// good idea when we are polling performance every
+			// second.
+			err = ch.WriteNB(ctx, p.sinkC,
+				measurementDrain{})
+			if err != nil {
+				log.Tracef("measurementDrain signal failed: %v",
+					err)
 			}
 		}
 	}

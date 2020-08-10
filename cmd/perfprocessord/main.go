@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	ch "github.com/businessperformancetuning/perfcollector/channel"
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/parser"
@@ -144,21 +145,11 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, s *session, cmd types.PCComma
 		return nil, err
 	}
 
-	select {
-	case <-ctx.Done():
-		return nil, fmt.Errorf("sendAndWait abnormal termination")
-	case reply, ok := <-c:
-		if !ok {
-			return nil, fmt.Errorf("sendAndWait channel closed")
-		}
-
-		// Check to see if we got an error
-		if e, ok := reply.(error); ok {
-			return nil, e
-		}
-
-		return reply, nil
+	reply, readErr := ch.Read(ctx, c)
+	if readErr != nil {
+		return nil, readErr
 	}
+	return reply, nil
 }
 
 func (p *PerfCtl) oobHandler(s *session) error {
@@ -645,7 +636,7 @@ func (p *PerfCtl) sink(ctx context.Context, site, host uint64, address string) e
 		select {
 		case <-ctx.Done():
 			break
-		case <-time.After(5 * time.Second):
+		case <-time.After(5 * time.Second): // XXX this should be 30 or so seconds
 		}
 	}
 

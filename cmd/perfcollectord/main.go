@@ -326,7 +326,8 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 
 				m.Duration = time.Now().Sub(m.Timestamp)
 
-				// Spill last measurement if queue depth is reached
+				// Spill last measurement if queue depth is
+				// reached
 				err = ch.WriteNB(ctx, measurements, &m)
 				if err != nil && err == ch.ErrChannelBusy {
 					log.Tracef("startCollection spill: %v",
@@ -342,8 +343,7 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 			// XXX think about always draining. This may not be a
 			// good idea when we are polling performance every
 			// second.
-			err = ch.WriteNB(ctx, p.sinkC,
-				measurementDrain{})
+			err = ch.WriteNB(ctx, p.sinkC, measurementDrain{})
 			if err != nil {
 				log.Tracef("measurementDrain signal failed: %v",
 					err)

@@ -446,6 +446,40 @@ func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PC
 	return types.Encode(reply)
 }
 
+func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
+	log.Tracef("handleOnce %v", cmd.Cmd)
+	defer log.Tracef("handleOnce %v exit", cmd.Cmd)
+
+	co, ok := cmd.Payload.(types.PCCollectOnce)
+	if !ok {
+		// Should not happen
+		return nil, fmt.Errorf("handleOnce: type assertion error %T",
+			co)
+	}
+
+	payload := types.PCCollectOnceReply{
+		Values: make([][]byte, len(co.Systems)),
+	}
+	var err error
+	for k, v := range co.Systems {
+		log.Tracef("handleOnce: %v", v)
+		payload.Values[k], err = util.Measure(v)
+		if err != nil {
+			log.Errorf("handleOnce ReadFile: %v", err)
+			return protocolError(cmd.Tag, "invalid system: %v", v)
+		}
+	}
+
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCCollectOnceReplyCmd,
+		Payload: payload,
+	}
+
+	return types.Encode(reply)
+}
+
 func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
 	defer func() {
@@ -508,8 +542,8 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 				// Unregister on exit.
 				defer callback()
 			}
-		//case types.PCCollectOnceCmd:
-		//	reply, err = p.handleOnce(cmd)
+		case types.PCCollectOnceCmd:
+			reply, err = p.handleOnce(cmd)
 
 		case types.PCStatusCollectionCmd:
 			reply, err = p.handleStatusCollection(ctx, cmd, channel)

@@ -363,13 +363,28 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 
 	switch args[0] {
 	case "status":
-		r, err := p.sendAndWait(ctx, s, types.PCCommand{
+		reply, err := p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCStatusCollectionCmd,
 		})
 		if err != nil {
 			return err
 		}
-		log.Infof("%v", spew.Sdump(r))
+		r, ok := reply.(types.PCStatusCollectionReply)
+		if !ok {
+			return fmt.Errorf("once reply invalid type: %T", reply)
+		}
+		fmt.Printf("Sink enabled       : %v\n", r.SinkEnabled)
+		fmt.Printf("Measurement enabled: %v\n", r.MeasurementEnabled)
+		if r.MeasurementEnabled && r.StartCollection != nil {
+			fmt.Printf("Frequency          : %v\n",
+				r.StartCollection.Frequency)
+			fmt.Printf("Queue depth        : %v\n",
+				r.StartCollection.QueueDepth)
+			fmt.Printf("Queue free         : %v\n",
+				r.QueueFree)
+			fmt.Printf("Systems            : %v\n",
+				r.StartCollection.Systems)
+		}
 
 	case "start":
 		frequency, err := argAsInt("frequency", a)
@@ -409,9 +424,40 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 			return err
 		}
 
+	case "once":
+		systems, err := argAsStringSlice("systems", a)
+		if err != nil {
+			systems = []string{
+				"/proc/cpuinfo",
+				"/proc/uptime",
+				"/proc/version",
+			}
+		}
+		reply, err := p.sendAndWait(ctx, s, types.PCCommand{
+			Cmd: types.PCCollectOnceCmd,
+			Payload: types.PCCollectOnce{
+				Systems: systems,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		onceReply, ok := reply.(types.PCCollectOnceReply)
+		if !ok {
+			return fmt.Errorf("once reply invalid type: %T", reply)
+		}
+		for k := range onceReply.Values {
+			fmt.Printf("System: %v\n", systems[k])
+			fmt.Printf("%v", string(onceReply.Values[k]))
+			if k < len(onceReply.Values)-1 {
+				fmt.Printf("\n")
+			}
+		}
+
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
 	}
+
 	return nil
 }
 
@@ -425,6 +471,7 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	case "status":
 	case "start":
 	case "stop":
+	case "once":
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
 	}

@@ -18,17 +18,20 @@ func fileExists(name string) bool {
 	return true
 }
 
-func SupportedSystem(s string) bool {
-	switch s {
-	case "stat", "meminfo", "net/dev", "diskstats":
-		return true
-	}
-	return false
-}
+//func SupportedSystem(s string) bool {
+//	switch s {
+//	case "stat", "meminfo", "net/dev", "diskstats":
+//		return true
+//	}
+//	return false
+//}
 
 func ValidSystem(s string) bool {
+	// XXX we really need to reject some stuff from proc and sys. There
+	// definitely is data that can leak.
 	path := filepath.Clean(s)
-	if !strings.HasPrefix(path, "/proc/") {
+	if !(strings.HasPrefix(path, "/proc/") ||
+		strings.HasPrefix(path, "/sys/")) {
 		return false
 	}
 	return fileExists(path)

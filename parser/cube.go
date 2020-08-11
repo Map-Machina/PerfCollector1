@@ -7,6 +7,12 @@ import (
 	"github.com/businessperformancetuning/perfcollector/database"
 )
 
+// NIC contains NIC specifics such as speed.
+type NIC struct {
+	Duplex string // "half" or "full"
+	Speed  uint64
+}
+
 func getAllBusy(t *CPUStat) (float64, float64) {
 	busy := t.User + t.System + t.Nice + t.Iowait + t.IRQ + t.SoftIRQ +
 		t.Steal
@@ -161,7 +167,28 @@ func svalue(t1, t2, tvi uint64) float64 {
 	return (float64(t2) - float64(t1)) / float64(tvi) * 100
 }
 
-func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, tvi uint64) ([]database.NetDev, error) {
+func ifUtil(name string, nics map[string]NIC, rxKBytes, txKBytes float64) float64 {
+	if nics == nil {
+		return 0
+	}
+	nic, ok := nics[name]
+	if !ok {
+		return 0
+	}
+	if nic.Speed == 0 {
+		return 0
+	}
+	speed := float64(nic.Speed * 1000000)
+	if nic.Duplex == "full" {
+		if rxKBytes > txKBytes {
+			return (rxKBytes * 800) / speed
+		}
+		return (txKBytes * 800) / speed
+	}
+	return (rxKBytes + txKBytes) * 800 / speed
+}
+
+func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, tvi uint64, nics map[string]NIC) ([]database.NetDev, error) {
 	if len(t1) != len(t2) {
 		return nil, fmt.Errorf("inval;id length %v %v",
 			len(t1), len(t2))
@@ -177,16 +204,19 @@ func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, t
 
 		rxBytes := svalue(t1[k].RxBytes, cur.RxBytes, tvi)
 		txBytes := svalue(t1[k].TxBytes, cur.TxBytes, tvi)
+		rxKBytes := rxBytes / 1024
+		txKBytes := txBytes / 1024
 		dnd = append(dnd, database.NetDev{
 			Name:         k,
 			RxPackets:    svalue(t1[k].RxPackets, cur.RxPackets, tvi),
 			TxPackets:    svalue(t1[k].TxPackets, cur.TxPackets, tvi),
-			RxKBytes:     rxBytes / 1024,
-			TxKBytes:     txBytes / 1024,
+			RxKBytes:     rxKBytes,
+			TxKBytes:     txKBytes,
 			RxCompressed: svalue(t1[k].RxCompressed, cur.RxCompressed, tvi),
 			TxCompressed: svalue(t1[k].TxCompressed, cur.TxCompressed, tvi),
 			RxMulticast:  svalue(t1[k].RxMulticast, cur.RxMulticast, tvi),
-			IfUtil:       0, // XXX need /sys fields for this
+			// XXX not sure why * 10 since this code is a duplcate of sar
+			IfUtil: ifUtil(k, nics, rxKBytes, txKBytes) * 10,
 		})
 	}
 

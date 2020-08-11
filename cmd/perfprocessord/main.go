@@ -371,7 +371,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		}
 		r, ok := reply.(types.PCStatusCollectionReply)
 		if !ok {
-			return fmt.Errorf("once reply invalid type: %T", reply)
+			return fmt.Errorf("status reply invalid type: %T", reply)
 		}
 		fmt.Printf("Sink enabled       : %v\n", r.SinkEnabled)
 		fmt.Printf("Measurement enabled: %v\n", r.MeasurementEnabled)
@@ -555,6 +555,63 @@ func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection
 	return nil
 }
 
+func (p *PerfCtl) getNetDevices(ctx context.Context, s *session, devices []string) ([]parser.NIC, error) {
+	systems := make([]string, 0, len(devices)*2)
+	for k := range devices {
+		systems = append(systems, filepath.Join("/sys", "class", "net",
+			devices[k], "duplex"))
+		systems = append(systems, filepath.Join("/sys", "class", "net",
+			devices[k], "speed"))
+	}
+
+	reply, err := p.sendAndWait(ctx, s, types.PCCommand{
+		Cmd: types.PCCollectOnceCmd,
+		Payload: types.PCCollectOnce{
+			Systems: systems,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	r, ok := reply.(types.PCCollectOnceReply)
+	if !ok {
+		return nil, fmt.Errorf("invalid reply type: %T", reply)
+	}
+
+	// Make sure we got enough responses
+	if len(r.Values) != len(devices)*2 {
+		return nil, fmt.Errorf("invalid number of responses: %v %v",
+			len(r.Values), len(devices)*2)
+	}
+
+	nics := make([]parser.NIC, 0, len(devices)*2)
+	for i := 0; i < len(r.Values); i += 2 {
+		var duplex string
+		switch strings.TrimSpace(string(r.Values[i])) {
+		case "half":
+			duplex = "half"
+		case "full":
+			duplex = "full"
+		default:
+			return nil, fmt.Errorf("Invalid duplex: '%v'",
+				string(r.Values[i]))
+		}
+
+		speed, err := strconv.ParseUint(strings.TrimSpace(string(r.Values[i+1])),
+			10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid speed: %v", err)
+		}
+
+		nics = append(nics, parser.NIC{
+			Duplex: duplex,
+			Speed:  speed,
+		})
+	}
+
+	return nics, nil
+}
+
 func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address string) error {
 	log.Tracef("sinkLoop %v:%v", site, host)
 	defer log.Tracef("sinkLoop exit %v:%v", site, host)
@@ -583,6 +640,36 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 	if err != nil {
 		log.Errorf("sendAndWait connect: %v", err)
 		return terminalError{err: err}
+	}
+
+	// Create nicCache that holds duplex and speed.
+	nicCache := make(map[string]parser.NIC)
+	fillCache := func(n parser.NetDev) error {
+		nics := make([]string, 0, len(n))
+		for k := range n {
+			if _, ok := nicCache[k]; ok {
+				continue
+			}
+			if k == "lo" {
+				// lo is invalid so insert zero value
+				nicCache[k] = parser.NIC{}
+				continue
+			}
+			nics = append(nics, k)
+		}
+
+		// Get specifics
+		reply, err := p.getNetDevices(ctx, s, nics)
+		if err != nil {
+			return err
+		}
+
+		// Cache values
+		for k := range reply {
+			nicCache[nics[k]] = reply[k]
+		}
+
+		return nil
 	}
 
 	runID := uint64(0)
@@ -666,6 +753,15 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				log.Errorf("could not process netdev: %v", err)
 				continue
 			}
+
+			// See if we need to cache NIC details
+			err = fillCache(n)
+			if err != nil {
+				log.Errorf("could not process fillCache: %v",
+					err)
+				continue
+			}
+
 			if previousNet == nil {
 				previousNet = n
 				continue
@@ -673,7 +769,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			tvi := uint64(m.Frequency.Seconds()) * parser.UserHZ
 			nd, err := parser.CubeNetDev(runID, m.Timestamp.Unix(),
 				m.Start.Unix(), int64(m.Duration),
-				previousNet, n, tvi)
+				previousNet, n, tvi, nicCache)
 			if err != nil {
 				log.Errorf("sigkLoop CubeNetDev: %v", err)
 				continue
@@ -685,6 +781,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			//		err)
 			//}
 			spew.Dump(nd)
+			//_ = nd
 			continue
 
 		default:

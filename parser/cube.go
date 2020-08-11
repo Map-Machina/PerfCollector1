@@ -156,3 +156,39 @@ func CubeMeminfo(runID uint64, timestamp, start, duration int64, mi *Meminfo) (*
 		Dirty:    mi.Dirty,
 	}, nil
 }
+
+func svalue(t1, t2, tvi uint64) float64 {
+	return (float64(t2) - float64(t1)) / float64(tvi) * 100
+}
+
+func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, tvi uint64) ([]database.NetDev, error) {
+	if len(t1) != len(t2) {
+		return nil, fmt.Errorf("inval;id length %v %v",
+			len(t1), len(t2))
+	}
+
+	dnd := make([]database.NetDev, 0, len(t1))
+	for k := range t1 {
+		cur, ok := t2[k]
+		if !ok {
+			return nil, fmt.Errorf("current interface not found: %v",
+				k)
+		}
+
+		rxBytes := svalue(t1[k].RxBytes, cur.RxBytes, tvi)
+		txBytes := svalue(t1[k].TxBytes, cur.TxBytes, tvi)
+		dnd = append(dnd, database.NetDev{
+			Name:         k,
+			RxPackets:    svalue(t1[k].RxPackets, cur.RxPackets, tvi),
+			TxPackets:    svalue(t1[k].TxPackets, cur.TxPackets, tvi),
+			RxKBytes:     rxBytes / 1024,
+			TxKBytes:     txBytes / 1024,
+			RxCompressed: svalue(t1[k].RxCompressed, cur.RxCompressed, tvi),
+			TxCompressed: svalue(t1[k].TxCompressed, cur.TxCompressed, tvi),
+			RxMulticast:  svalue(t1[k].RxMulticast, cur.RxMulticast, tvi),
+			IfUtil:       0, // XXX need /sys fields for this
+		})
+	}
+
+	return dnd, nil
+}

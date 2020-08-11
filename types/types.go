@@ -72,7 +72,8 @@ type PCCollection struct {
 	Timestamp   time.Time     // Time of *overall* collection
 	Start       time.Time     // Start time of *this* collection
 	Duration    time.Duration // Time collection took
-	System      string        // System tha was measured
+	Frequency   time.Duration // Collection frequency
+	System      string        // System that was measured
 	Measurement string        // Raw measurement
 }
 

@@ -26,6 +26,7 @@ import (
 
 const (
 	userHZ = 100 // Should be settable
+	UserHZ = 100 // Same as above but exported.
 )
 
 // CPUStat shows how much time the cpu spend in various stages.

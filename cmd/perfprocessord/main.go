@@ -586,7 +586,10 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 	}
 
 	runID := uint64(0)
-	var previousStat *parser.Stat
+	var (
+		previousStat *parser.Stat
+		previousNet  parser.NetDev
+	)
 	// We are in sinkLoop mode. Register sinkLoop and process measurements.
 	dec := gob.NewDecoder(s.channel)
 	for {
@@ -649,46 +652,41 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				log.Errorf("sinkLoop CubeMeminfo: %v", err)
 				continue
 			}
-			//err = p.db.MemInsert(mi)
+			//err = p.db.MeminfoInsert(mi)
 			//if err != nil {
-			//	log.Errorf("sinkLoop CubeMeminfo insert: %v",
+			//	log.Errorf("sinkLoop MeminfoInsert insert: %v",
 			//		err)
 			//}
 			spew.Dump(mi)
 			continue
 
-		//	//// Insert runid
-		//	//m := database.Measurements{
-		//	//	SiteID: 1, // User provided
-		//	//	HostID: 2, // User provided
-		//	//}
-		//	//runId, err := db.MeasurementsInsert(&m)
-		//	//if err != nil {
-		//	//	log.Errorf("could not insert measurement: %v", err)
-		//	//	continue
-		//	//}
+		case "/proc/net/dev":
+			n, err := parser.ProcessNetDev([]byte(m.Measurement))
+			if err != nil {
+				log.Errorf("could not process netdev: %v", err)
+				continue
+			}
+			if previousNet == nil {
+				previousNet = n
+				continue
+			}
+			tvi := uint64(m.Frequency.Seconds()) * parser.UserHZ
+			nd, err := parser.CubeNetDev(runID, m.Timestamp.Unix(),
+				m.Start.Unix(), int64(m.Duration),
+				previousNet, n, tvi)
+			if err != nil {
+				log.Errorf("sigkLoop CubeNetDev: %v", err)
+				continue
+			}
+			previousNet = n
+			//err = p.db.NetDevInsert(nd)
+			//if err != nil {
+			//	log.Errorf("sinkLoop NetDevInsert insert: %v",
+			//		err)
+			//}
+			spew.Dump(nd)
+			continue
 
-		//	//// Insert meminfo
-		//	//ss := database.Meminfo2{
-		//	//	database.MeminfoIdentifiers{
-		//	//		12,
-		//	//	},
-		//	//	database.Collection{
-		//	//		Timestamp: m.Timestamp.UnixNano(),
-		//	//		Duration:  m.Duration,
-		//	//	},
-		//	//	s,
-		//	//}
-		//	//err = pc.db.MeminfoInsert(&ss)
-		//	//if err != nil {
-		//	//	log.Errorf("sink MeminfoInsert: %v", err)
-		//	//}
-
-		//	//// Insert stat
-
-		//	//// Insert net IO
-
-		//	//// Insert block IO
 		default:
 			log.Errorf("unknown system: %v", m.System)
 		}

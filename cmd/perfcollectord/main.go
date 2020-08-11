@@ -312,8 +312,9 @@ func (p *PerfCollector) startCollection(ctx context.Context, sc types.PCStartCol
 			for _, v := range sc.Systems {
 				m := types.PCCollection{
 					System:    v,
-					Timestamp: timestamp,  // Overall timestamp
-					Start:     time.Now(), // This timestamp
+					Timestamp: timestamp,    // Overall timestamp
+					Start:     time.Now(),   // This timestamp
+					Frequency: sc.Frequency, // Frequency
 				}
 
 				blob, err := util.Measure(v)

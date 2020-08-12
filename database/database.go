@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"time"
 )
 
@@ -10,12 +11,12 @@ type Database interface {
 	Close() error  // Close database
 
 	// Insert measurement and return fresh run id
-	MeasurementsInsert(*Measurements) (uint64, error)
+	MeasurementsInsert(context.Context, *Measurements) (uint64, error)
 
-	StatInsert([]Stat) error         // Insert stat record.
-	MeminfoInsert(*Meminfo) error    // Insert meminfo record.
-	NetDevInsert([]NetDev) error     // Insert netdev record.
-	DiskstatInsert([]Diskstat) error // Insert diskstat record.
+	StatInsert(context.Context, []Stat) error         // Insert stat record.
+	MeminfoInsert(context.Context, *Meminfo) error    // Insert meminfo record.
+	NetDevInsert(context.Context, []NetDev) error     // Insert netdev record.
+	DiskstatInsert(context.Context, []Diskstat) error // Insert diskstat record.
 }
 
 const (

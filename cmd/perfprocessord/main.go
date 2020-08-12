@@ -644,7 +644,11 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 
 	// Create nicCache that holds duplex and speed.
 	nicCache := make(map[string]parser.NIC)
+	cacheFilled := false
 	fillCache := func(n parser.NetDev) error {
+		if cacheFilled {
+			return nil
+		}
 		nics := make([]string, 0, len(n))
 		for k := range n {
 			if _, ok := nicCache[k]; ok {
@@ -668,6 +672,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		for k := range reply {
 			nicCache[nics[k]] = reply[k]
 		}
+		cacheFilled = true
 
 		return nil
 	}
@@ -722,7 +727,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			}
 			previousStat = &s
 
-			err = p.db.StatInsert(cs)
+			err = p.db.StatInsert(ctx, cs)
 			if err != nil {
 				log.Errorf("sinkLoop CubeStat insert: %v", err)
 			}
@@ -741,7 +746,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				continue
 			}
 
-			err = p.db.MeminfoInsert(mi)
+			err = p.db.MeminfoInsert(ctx, mi)
 			if err != nil {
 				log.Errorf("sinkLoop MeminfoInsert insert: %v",
 					err)
@@ -777,7 +782,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			}
 			previousNet = n
 
-			err = p.db.NetDevInsert(nd)
+			err = p.db.NetDevInsert(ctx, nd)
 			if err != nil {
 				log.Errorf("sinkLoop NetDevInsert insert: %v",
 					err)
@@ -805,7 +810,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			}
 			previousDisk = d
 
-			err = p.db.DiskstatInsert(ds)
+			err = p.db.DiskstatInsert(ctx, ds)
 			if err != nil {
 				log.Errorf("sinkLoop DiskstatInsert insert: %v",
 					err)

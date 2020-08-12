@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ func init() {
 }
 
 func TestPostgress(t *testing.T) {
+	ctx := context.TODO()
 	db, err := New(dbName, createURI)
 	if err != nil {
 		t.Fatal(err)
@@ -58,14 +60,14 @@ func TestPostgress(t *testing.T) {
 		SiteID: 1,
 		HostID: 2,
 	}
-	runId, err := db.MeasurementsInsert(&m)
+	runId, err := db.MeasurementsInsert(ctx, &m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if runId != 1 {
 		t.Fatalf("got %v", runId)
 	}
-	runId, err = db.MeasurementsInsert(&m)
+	runId, err = db.MeasurementsInsert(ctx, &m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +94,7 @@ func TestPostgress(t *testing.T) {
 			Idle:   float64(i),
 		})
 	}
-	err = db.StatInsert(s)
+	err = db.StatInsert(ctx, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,7 @@ func TestPostgress(t *testing.T) {
 		Inactive:      54321,
 		Dirty:         54321,
 	}
-	err = db.MeminfoInsert(&mi)
+	err = db.MeminfoInsert(ctx, &mi)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestPostgress(t *testing.T) {
 			IfUtil:       0.99,
 		})
 	}
-	err = db.NetDevInsert(nd)
+	err = db.NetDevInsert(ctx, nd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +167,7 @@ func TestPostgress(t *testing.T) {
 			Bdscd: 40.34,
 		})
 	}
-	err = db.DiskstatInsert(ds)
+	err = db.DiskstatInsert(ctx, ds)
 	if err != nil {
 		t.Fatal(err)
 	}

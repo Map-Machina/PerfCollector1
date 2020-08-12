@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/businessperformancetuning/perfcollector/database"
@@ -70,9 +71,10 @@ func (p *postgres) Create() error {
 	return nil
 }
 
-func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) {
+func (p *postgres) MeasurementsInsert(ctx context.Context, m *database.Measurements) (uint64, error) {
 	log.Tracef("postgres.MeasurementsInsert")
 
+	// XXX USE CTX
 	rows, err := p.db.NamedQuery(database.InsertMeasurements, m)
 	if err != nil {
 		return 0, err
@@ -87,11 +89,11 @@ func (p *postgres) MeasurementsInsert(m *database.Measurements) (uint64, error) 
 	return runId, nil
 }
 
-func (p *postgres) StatInsert(s []database.Stat) error {
+func (p *postgres) StatInsert(ctx context.Context, s []database.Stat) error {
 	log.Tracef("postgres.StatInsert")
 
 	// Use BeginTxx with ctx
-	tx, err := p.db.Beginx()
+	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -108,11 +110,11 @@ func (p *postgres) StatInsert(s []database.Stat) error {
 	return tx.Commit()
 }
 
-func (p *postgres) MeminfoInsert(m *database.Meminfo) error {
+func (p *postgres) MeminfoInsert(ctx context.Context, m *database.Meminfo) error {
 	log.Tracef("postgres.MeminfoInsert")
 
 	// Use BeginTxx with ctx
-	tx, err := p.db.Beginx()
+	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -127,11 +129,11 @@ func (p *postgres) MeminfoInsert(m *database.Meminfo) error {
 	return tx.Commit()
 }
 
-func (p *postgres) NetDevInsert(nd []database.NetDev) error {
+func (p *postgres) NetDevInsert(ctx context.Context, nd []database.NetDev) error {
 	log.Tracef("postgres.NetDevInsert")
 
 	// Use BeginTxx with ctx
-	tx, err := p.db.Beginx()
+	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -148,11 +150,11 @@ func (p *postgres) NetDevInsert(nd []database.NetDev) error {
 	return tx.Commit()
 }
 
-func (p *postgres) DiskstatInsert(ds []database.Diskstat) error {
+func (p *postgres) DiskstatInsert(ctx context.Context, ds []database.Diskstat) error {
 	log.Tracef("postgres.DiskstatInsert")
 
 	// Use BeginTxx with ctx
-	tx, err := p.db.Beginx()
+	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}

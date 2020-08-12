@@ -676,6 +676,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 	var (
 		previousStat *parser.Stat
 		previousNet  parser.NetDev
+		previousDisk []parser.Diskstats
 	)
 	// We are in sinkLoop mode. Register sinkLoop and process measurements.
 	dec := gob.NewDecoder(s.channel)
@@ -779,6 +780,34 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 			err = p.db.NetDevInsert(nd)
 			if err != nil {
 				log.Errorf("sinkLoop NetDevInsert insert: %v",
+					err)
+			}
+			continue
+
+		case "/proc/diskstats":
+			d, err := parser.ProcessDiskstats([]byte(m.Measurement))
+			if err != nil {
+				log.Errorf("could not process diskstats: %v",
+					err)
+				continue
+			}
+			if previousDisk == nil {
+				previousDisk = d
+				continue
+			}
+			tvi := uint64(m.Frequency.Seconds()) * parser.UserHZ
+			ds, err := parser.CubeDiskstats(runID,
+				m.Timestamp.Unix(), m.Start.Unix(),
+				int64(m.Duration), previousDisk, d, tvi)
+			if err != nil {
+				log.Errorf("sigkLoop CubeDiskstats: %v", err)
+				continue
+			}
+			previousDisk = d
+
+			err = p.db.DiskstatInsert(ds)
+			if err != nil {
+				log.Errorf("sinkLoop DiskstatInsert insert: %v",
 					err)
 			}
 			continue

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/businessperformancetuning/perfcollector/database"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -140,9 +139,29 @@ func (p *postgres) NetDevInsert(nd []database.NetDev) error {
 	for k := range nd {
 		_, err = tx.NamedExec(database.InsertNetDev, nd[k])
 		if err != nil {
-			spew.Dump(nd[k])
 			err2 := tx.Rollback()
 			return fmt.Errorf("postgres.NetDevInsert NamedExec: "+
+				"%v; Rollback: %v", err, err2)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (p *postgres) DiskstatInsert(ds []database.Diskstat) error {
+	log.Tracef("postgres.DiskstatInsert")
+
+	// Use BeginTxx with ctx
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	for k := range ds {
+		_, err = tx.NamedExec(database.InsertDiskstat, ds[k])
+		if err != nil {
+			err2 := tx.Rollback()
+			return fmt.Errorf("postgres.DiskstatInsert NamedExec: "+
 				"%v; Rollback: %v", err, err2)
 		}
 	}

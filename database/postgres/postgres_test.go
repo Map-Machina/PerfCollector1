@@ -145,4 +145,28 @@ func TestPostgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Insert Diskstat
+	ds := make([]database.Diskstat, 0, 5)
+	for i := 0; i < 5; i++ {
+		ds = append(ds, database.Diskstat{
+			RunID:     runId,
+			Timestamp: ts.Unix(),
+			Start:     ts.Add(time.Duration(time.Microsecond)).Unix(),
+			Duration:  1234,
+
+			Name:  fmt.Sprintf("sda%v", i),
+			Tps:   12.34,
+			Rtps:  35.34,
+			Wtps:  36.34,
+			Dtps:  37.34,
+			Bread: 38.34,
+			Bwrtn: 39.34,
+			Bdscd: 40.34,
+		})
+	}
+	err = db.DiskstatInsert(ds)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

@@ -195,7 +195,7 @@ func ifUtil(name string, nics map[string]NIC, rxKBytes, txKBytes float64) float6
 
 func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, tvi uint64, nics map[string]NIC) ([]database.NetDev, error) {
 	if len(t1) != len(t2) {
-		return nil, fmt.Errorf("inval;id length %v %v",
+		return nil, fmt.Errorf("invalid length %v %v",
 			len(t1), len(t2))
 	}
 
@@ -231,4 +231,39 @@ func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, t
 	}
 
 	return dnd, nil
+}
+
+func CubeDiskstats(runID uint64, timestamp, start, duration int64, t1, t2 []Diskstats, tvi uint64) ([]database.Diskstat, error) {
+	if len(t1) != len(t2) {
+		return nil, fmt.Errorf("invalid length %v %v",
+			len(t1), len(t2))
+	}
+
+	ds := make([]database.Diskstat, 0, len(t1))
+	for k := range t1 {
+		if t1[k].ReadIOs == 0 && t1[k].WriteIOs == 0 && t1[k].DiscardIOs == 0 {
+			// Unused device, skip.
+			continue
+		}
+
+		t1TotalIOs := t1[k].ReadIOs + t1[k].WriteIOs + t1[k].DiscardIOs
+		t2TotalIOs := t2[k].ReadIOs + t2[k].WriteIOs + t2[k].DiscardIOs
+		ds = append(ds, database.Diskstat{
+			RunID:     runID,
+			Timestamp: timestamp,
+			Start:     start,
+			Duration:  duration,
+
+			Name:  t1[k].DeviceName,
+			Tps:   svalue(t1TotalIOs, t2TotalIOs, tvi),
+			Rtps:  svalue(t1[k].ReadIOs, t2[k].ReadIOs, tvi),
+			Wtps:  svalue(t1[k].WriteIOs, t2[k].WriteIOs, tvi),
+			Dtps:  svalue(t1[k].DiscardIOs, t2[k].DiscardIOs, tvi),
+			Bread: svalue(t1[k].ReadSectors, t2[k].ReadSectors, tvi),
+			Bwrtn: svalue(t1[k].WriteSectors, t2[k].WriteSectors, tvi),
+			Bdscd: svalue(t1[k].DiscardSectors, t2[k].DiscardSectors, tvi),
+		})
+	}
+
+	return ds, nil
 }

@@ -12,9 +12,10 @@ type Database interface {
 	// Insert measurement and return fresh run id
 	MeasurementsInsert(*Measurements) (uint64, error)
 
-	StatInsert([]Stat) error      // Insert stat record.
-	MeminfoInsert(*Meminfo) error // Insert meminfo record.
-	NetDevInsert([]NetDev) error  // Insert netdev record.
+	StatInsert([]Stat) error         // Insert stat record.
+	MeminfoInsert(*Meminfo) error    // Insert meminfo record.
+	NetDevInsert([]NetDev) error     // Insert netdev record.
+	DiskstatInsert([]Diskstat) error // Insert diskstat record.
 }
 
 const (
@@ -130,6 +131,26 @@ CREATE TABLE netdev (
 	txcompressed		NUMERIC,
 	rxmulticast		NUMERIC,
 	ifutil			NUMERIC,
+
+	PRIMARY KEY		(runid, timestamp, name),
+	UNIQUE			(runid, timestamp, name)
+);
+`, `
+CREATE TABLE diskstat (
+	runid			BIGSERIAL NOT NULL,
+
+	timestamp		BIGINT NOT NULL,
+	Start			BIGINT NOT NULL,
+	Duration		BIGINT NOT NULL,
+
+	name			TEXT,
+	tps			NUMERIC,
+	rtps			NUMERIC,
+	wtps			NUMERIC,
+	dtps			NUMERIC,
+	bread			NUMERIC,
+	bwrtn			NUMERIC,
+	bdscd			NUMERIC,
 
 	PRIMARY KEY		(runid, timestamp, name),
 	UNIQUE			(runid, timestamp, name)

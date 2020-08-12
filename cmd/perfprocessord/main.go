@@ -739,12 +739,12 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				log.Errorf("sinkLoop CubeMeminfo: %v", err)
 				continue
 			}
-			//err = p.db.MeminfoInsert(mi)
-			//if err != nil {
-			//	log.Errorf("sinkLoop MeminfoInsert insert: %v",
-			//		err)
-			//}
-			spew.Dump(mi)
+
+			err = p.db.MeminfoInsert(mi)
+			if err != nil {
+				log.Errorf("sinkLoop MeminfoInsert insert: %v",
+					err)
+			}
 			continue
 
 		case "/proc/net/dev":
@@ -775,13 +775,12 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				continue
 			}
 			previousNet = n
-			//err = p.db.NetDevInsert(nd)
-			//if err != nil {
-			//	log.Errorf("sinkLoop NetDevInsert insert: %v",
-			//		err)
-			//}
-			spew.Dump(nd)
-			//_ = nd
+
+			err = p.db.NetDevInsert(nd)
+			if err != nil {
+				log.Errorf("sinkLoop NetDevInsert insert: %v",
+					err)
+			}
 			continue
 
 		default:

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -73,9 +74,10 @@ func TestPostgress(t *testing.T) {
 	}
 
 	// Insert 5 records into stat
+	ts := time.Now()
+	s := make([]database.Stat, 0, 5)
 	for i := 0; i < 5; i++ {
-		ts := time.Now()
-		s := database.Stat{
+		s = append(s, database.Stat{
 			RunID:     runId,
 			Timestamp: ts.Unix(),
 			Start:     ts.Add(time.Duration(i+1) * time.Microsecond).Unix(),
@@ -88,10 +90,59 @@ func TestPostgress(t *testing.T) {
 			IOWait: float64(i),
 			Steal:  float64(i),
 			Idle:   float64(i),
-		}
-		err = db.StatInsert(&s)
-		if err != nil {
-			t.Fatal(err)
-		}
+		})
+	}
+	err = db.StatInsert(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert meminfo
+	mi := database.Meminfo{
+		RunID:     runId,
+		Timestamp: ts.Unix(),
+		Start:     ts.Add(time.Duration(time.Microsecond)).Unix(),
+		Duration:  1234,
+
+		MemFree:       54321,
+		MemAvailable:  54321,
+		MemUsed:       54321,
+		PercentUsed:   0.12,
+		Buffers:       54321,
+		Cached:        54321,
+		Commit:        54321,
+		PercentCommit: 0.98,
+		Active:        54321,
+		Inactive:      54321,
+		Dirty:         54321,
+	}
+	err = db.MeminfoInsert(&mi)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert netdev
+	nd := make([]database.NetDev, 0, 5)
+	for i := 0; i < 5; i++ {
+		nd = append(nd, database.NetDev{
+			RunID:     runId,
+			Timestamp: ts.Unix(),
+			Start:     ts.Add(time.Duration(time.Microsecond)).Unix(),
+			Duration:  1234,
+
+			Name:         fmt.Sprintf("eno%v", i),
+			RxPackets:    12.34,
+			TxPackets:    35.34,
+			RxKBytes:     36.34,
+			TxKBytes:     37.34,
+			RxCompressed: 38.34,
+			TxCompressed: 39.34,
+			RxMulticast:  40.34,
+			IfUtil:       0.99,
+		})
+	}
+	err = db.NetDevInsert(nd)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -147,6 +147,11 @@ func CubeMeminfo(runID uint64, timestamp, start, duration int64, mi *Meminfo) (*
 		usedMem = mi.MemTotal
 	}
 	return &database.Meminfo{
+		RunID:     runID,
+		Timestamp: timestamp,
+		Start:     start,
+		Duration:  duration,
+
 		MemFree:      mi.MemFree,
 		MemAvailable: mi.MemAvailable,
 		MemUsed:      mi.MemTotal - usedMem,
@@ -207,6 +212,11 @@ func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, t
 		rxKBytes := rxBytes / 1024
 		txKBytes := txBytes / 1024
 		dnd = append(dnd, database.NetDev{
+			RunID:     runID,
+			Timestamp: timestamp,
+			Start:     start,
+			Duration:  duration,
+
 			Name:         k,
 			RxPackets:    svalue(t1[k].RxPackets, cur.RxPackets, tvi),
 			TxPackets:    svalue(t1[k].TxPackets, cur.TxPackets, tvi),

@@ -12,7 +12,9 @@ type Database interface {
 	// Insert measurement and return fresh run id
 	MeasurementsInsert(*Measurements) (uint64, error)
 
-	StatInsert([]Stat) error // Insert stat record.
+	StatInsert([]Stat) error      // Insert stat record.
+	MeminfoInsert(*Meminfo) error // Insert meminfo record.
+	NetDevInsert([]NetDev) error  // Insert netdev record.
 }
 
 const (
@@ -87,6 +89,50 @@ CREATE TABLE stat (
 
 	PRIMARY KEY		(runid, timestamp, cpu),
 	UNIQUE			(runid, timestamp, cpu)
+);
+`, `
+CREATE TABLE meminfo (
+	runid			BIGSERIAL NOT NULL,
+
+	timestamp		BIGINT NOT NULL,
+	Start			BIGINT NOT NULL,
+	Duration		BIGINT NOT NULL,
+
+	memfree			BIGSERIAL,
+	memavailable		BIGSERIAL,
+	memused			BIGSERIAL,
+	percentused		NUMERIC,
+	buffers			BIGSERIAL,
+	cached			BIGSERIAL,
+	commit			BIGSERIAL,
+	percentcommit		NUMERIC,
+	active			BIGSERIAL,
+	inactive		BIGSERIAL,
+	dirty			BIGSERIAL,
+
+	PRIMARY KEY		(runid, timestamp),
+	UNIQUE			(runid, timestamp)
+);
+`, `
+CREATE TABLE netdev (
+	runid			BIGSERIAL NOT NULL,
+
+	timestamp		BIGINT NOT NULL,
+	Start			BIGINT NOT NULL,
+	Duration		BIGINT NOT NULL,
+
+	name			TEXT,
+	rxpackets		NUMERIC,
+	txpackets		NUMERIC,
+	rxkbytes		NUMERIC,
+	txkbytes		NUMERIC,
+	rxcompressed		NUMERIC,
+	txcompressed		NUMERIC,
+	rxmulticast		NUMERIC,
+	ifutil			NUMERIC,
+
+	PRIMARY KEY		(runid, timestamp, name),
+	UNIQUE			(runid, timestamp, name)
 );
 `}
 )

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/businessperformancetuning/perfcollector/database"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -102,6 +103,47 @@ func (p *postgres) StatInsert(s []database.Stat) error {
 			err2 := tx.Rollback()
 			return fmt.Errorf("NamedExec: %v; Rollback: %v",
 				err, err2)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (p *postgres) MeminfoInsert(m *database.Meminfo) error {
+	log.Tracef("postgres.MeminfoInsert")
+
+	// Use BeginTxx with ctx
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.NamedExec(database.InsertMeminfo, m)
+	if err != nil {
+		err2 := tx.Rollback()
+		return fmt.Errorf("postgres.MeminfoInsert NamedExec: %v; "+
+			"Rollback: %v", err, err2)
+	}
+
+	return tx.Commit()
+}
+
+func (p *postgres) NetDevInsert(nd []database.NetDev) error {
+	log.Tracef("postgres.NetDevInsert")
+
+	// Use BeginTxx with ctx
+	tx, err := p.db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	for k := range nd {
+		_, err = tx.NamedExec(database.InsertNetDev, nd[k])
+		if err != nil {
+			spew.Dump(nd[k])
+			err2 := tx.Rollback()
+			return fmt.Errorf("postgres.NetDevInsert NamedExec: "+
+				"%v; Rollback: %v", err, err2)
 		}
 	}
 

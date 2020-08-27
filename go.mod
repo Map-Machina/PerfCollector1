@@ -8,6 +8,7 @@ require (
 	github.com/decred/dcrd/dcrutil v1.4.0
 	github.com/decred/slog v1.0.0
 	github.com/gliderlabs/ssh v0.3.0
+	github.com/inhies/go-bytesize v0.0.0-20200716184324-4fe85e9b81b2
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/jrick/logrotate v1.0.0

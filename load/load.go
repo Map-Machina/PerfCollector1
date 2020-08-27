@@ -21,7 +21,7 @@ func user(percent float64, duration time.Duration) int {
 
 	busy := float64(duration) * percent
 	idle := float64(time.Second) - busy
-	userLoops := userLoad(time.Duration(busy))
+	userLoops := UserLoad(time.Duration(busy))
 	userIdle(time.Duration(idle))
 	return userLoops
 }
@@ -79,7 +79,7 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 	}
 	var userLoops, systemLoops int
 	for i := time.Duration(0); i < seconds; i++ {
-		userLoops += userLoad(userDuration)
+		userLoops += UserLoad(userDuration)
 		systemLoops += systemLoad(systemDuration)
 		userIdle(idleDuration)
 	}
@@ -94,7 +94,7 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 			panic(fmt.Sprintf("impossible idleFractionDuration: %v",
 				idleFractionDuration))
 		}
-		userLoops += userLoad(userFractionDuration)
+		userLoops += UserLoad(userFractionDuration)
 		systemLoops += systemLoad(systemFractionDuration)
 		userIdle(idleFractionDuration)
 	}
@@ -102,32 +102,33 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 	return userLoops, systemLoops, nil
 }
 
-func userLoad(duration time.Duration) (loops int) {
+func unit() {
+	//var mem [1024 * 1024]int32
+	var mem [1024 * 1024]int32
+	for k := range mem {
+		mem[k] = mem[k] + int32(k)
+	}
+}
+
+func UserLoad(duration time.Duration) (loops int) {
 	start := time.Now()
-	mem := make([]int32, 1024*1024)
-	for i := int32(0); ; i++ {
-		for k := range mem {
-			mem[k] = i
-			loops++
-			if time.Now().Sub(start) > duration {
-				return
-			}
+	for {
+		unit()
+		loops++
+		if time.Now().Sub(start) > duration {
+			return
 		}
 	}
 }
 
-func UserWork(workUnits int) time.Duration {
+func UserWork(workUnits int) (elapsed time.Duration) {
 	start := time.Now()
-	mem := make([]int32, 1024*1024)
-	loops := 0
-	for i := int32(0); ; i++ {
-		for k := range mem {
-			mem[k] = i
-			loops++
-			elapsed := time.Now().Sub(start)
-			if loops >= workUnits {
-				return elapsed
-			}
+	for {
+		unit()
+		workUnits--
+		elapsed = time.Now().Sub(start)
+		if workUnits == 0 {
+			return
 		}
 	}
 }

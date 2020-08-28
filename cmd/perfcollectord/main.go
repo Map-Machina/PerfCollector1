@@ -216,7 +216,7 @@ func (p *PerfCollector) sink(ctx context.Context) {
 func (p *PerfCollector) publicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	fp := ssh.FingerprintSHA256(key)
 	log.Tracef("publicKeyCallback %v", fp)
-	log.Tracef("publicKeyCallback %v exit", fp)
+	defer log.Tracef("publicKeyCallback %v exit", fp)
 
 	if _, ok := p.allowedKeys[fp]; !ok {
 		log.Errorf("Rejecting unknown key user %v address %v "+

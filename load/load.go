@@ -3,6 +3,7 @@ package load
 import (
 	"crypto/rand"
 	"fmt"
+	"math/big"
 	"time"
 )
 
@@ -131,4 +132,34 @@ func UserWork(workUnits int) (elapsed time.Duration) {
 			return
 		}
 	}
+}
+
+var (
+	zero = big.NewInt(0)
+	one  = big.NewInt(1)
+	two  = big.NewInt(2)
+)
+
+// Worst possible prime number calculator.
+func isPrime(n *big.Int) bool {
+	if n.Cmp(two) == -1 {
+		return false
+	}
+
+	sn := new(big.Int).Set(n)
+	sn.Sqrt(n)
+	i := new(big.Int).Set(two)
+	z := new(big.Int)
+	for {
+		if i.Cmp(sn) == 1 {
+			break
+		}
+		if z.Mod(n, i).Cmp(zero) == 0 {
+			return false
+		}
+
+		i.Add(i, one)
+	}
+
+	return true
 }

@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	DefaultConfigFilename = "perfprocessord.conf"
-	DefaultDataDirname    = "data"
+	DefaultConfigFilename  = "perfprocessord.conf"
+	DefaultDataDirname     = "data"
+	DefaultJournalFilename = "journal"
 )
 
 var (

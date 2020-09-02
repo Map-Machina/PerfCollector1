@@ -6,6 +6,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,6 +67,9 @@ type config struct {
 
 	// Journal
 	Journal bool `long:"journal" description:"Enable journaling of raw data."`
+
+	journalFilename string      // Journal filename including path
+	aead            cipher.AEAD // journal encryption cipher
 
 	HostsId map[string]HostIdentifier
 }
@@ -357,6 +361,10 @@ func loadConfig() (*config, []string, error) {
 	// means each individual piece of serialized data does not have to
 	// worry about changing names per network and such.
 	cfg.DataDir = cleanAndExpandPath(cfg.DataDir)
+
+	// Journal filename and cipher
+	cfg.journalFilename = filepath.Join(cfg.DataDir,
+		sharedconfig.DefaultJournalFilename)
 
 	// Append the network type to the log directory so it is "namespaced"
 	// per network in the same fashion as the data directory.

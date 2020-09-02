@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -523,38 +522,6 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	return nil
 }
 
-func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
-	if !util.ValidSystem(measurement.System) {
-		return fmt.Errorf("journal unsupported system: %v",
-			measurement.System)
-	}
-
-	filename := filepath.Join(p.cfg.DataDir, strconv.Itoa(int(site)),
-		strconv.Itoa(int(host)), strconv.Itoa(int(run)), measurement.System)
-	dir := filepath.Dir(filename)
-	err := os.MkdirAll(dir, 0750)
-	if err != nil {
-		return err
-	}
-
-	// Journal in JSON to remain human readability.
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY,
-		0640)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Create encoder
-	e := json.NewEncoder(f)
-	err = e.Encode(measurement)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (p *PerfCtl) getNetDevices(ctx context.Context, s *session, devices []string) ([]parser.NIC, error) {
 	systems := make([]string, 0, len(devices)*2)
 	for k := range devices {
@@ -698,11 +665,12 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 
 		if p.cfg.Journal {
 			log.Tracef("sinkLoop journal: %v", m.System)
-			err := p.journal(site, host, runID, m)
-			if err != nil {
-				return fmt.Errorf("sinkLoop journal %v:%v: %v",
-					site, host, err)
-			}
+			panic("fixme")
+			//err := p.journal(site, host, runID, m)
+			//if err != nil {
+			//	return fmt.Errorf("sinkLoop journal %v:%v: %v",
+			//		site, host, err)
+			//}
 			continue
 		}
 

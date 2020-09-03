@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
-	github.com/businessperformancetuning/license v0.0.0-20200902233858-9f9e436dffeb
+	github.com/businessperformancetuning/license v0.0.0-20200903120812-66f3bbe9e2c4
 	github.com/davecgh/go-spew v1.1.1
 	github.com/decred/dcrd/dcrutil v1.4.0
 	github.com/decred/slog v1.0.0
@@ -17,7 +17,8 @@ require (
 	github.com/minio/sio v0.2.0 // indirect
 	github.com/prometheus/common v0.10.0 // indirect
 	github.com/prometheus/procfs v0.1.3 // indirect
-	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
+	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/sys v0.0.0-20200831180312-196b9ba8737a // indirect
 	google.golang.org/appengine v1.6.6 // indirect
 )

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/businessperformancetuning/license/license"
@@ -18,6 +19,9 @@ func _main() error {
 	if len(args) != 4 {
 		return fmt.Errorf("usage %v <site_id> <site_name> "+
 			"<mac_address>", args[0])
+	}
+	if _, err := strconv.ParseUint(args[1], 10, 64); err != nil {
+		return fmt.Errorf("Invalid site_id: %v", err)
 	}
 	if args[3] == "00:00:00:00:00:00" {
 		return fmt.Errorf("localhost mac address")

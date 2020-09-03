@@ -6,20 +6,27 @@
 package main
 
 import (
+	"bufio"
 	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/businessperformancetuning/license/license"
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/sharedconfig"
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/util"
 	flags "github.com/jessevdk/go-flags"
+	cp "golang.org/x/crypto/chacha20poly1305"
 )
 
 const (
@@ -31,6 +38,7 @@ const (
 var (
 	defaultSSHKeyFile = filepath.Join(sharedconfig.DefaultHomeDir, "id_ed25519")
 	defaultLogDir     = filepath.Join(sharedconfig.DefaultHomeDir, defaultLogDirname)
+	nicRe             = regexp.MustCompile("^([0-9a-fA-F][0-9a-fA-F]:){5}([0-9a-fA-F][0-9a-fA-F])$")
 )
 
 // runServiceCommand is only set to a real function on Windows.  It is used
@@ -70,6 +78,12 @@ type config struct {
 
 	journalFilename string      // Journal filename including path
 	aead            cipher.AEAD // journal encryption cipher
+
+	// License
+	SiteID   string `long:"siteid" description:"Site identifier"`
+	SiteName string `long:"sitename" description:"Site name"`
+	License  string `long:"license" description:"License"`
+	license  *license.LicenseKey
 
 	HostsId map[string]HostIdentifier
 }
@@ -219,6 +233,42 @@ func newConfigParser(cfg *config, so *serviceOptions, options flags.Options) *fl
 		parser.AddGroup("Service Options", "Service Options", so)
 	}
 	return parser
+}
+
+// getAllMacs returns all MAC addressess on a system except for localhost.
+func getAllMacs() ([]string, error) {
+	dir := "/sys/class/net/"
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	macs := make([]string, 0, len(files))
+	for _, file := range files {
+		if file.Name() == "lo" {
+			continue
+		}
+		f, err := os.Open(filepath.Join(dir, file.Name(), "address"))
+		if err != nil {
+			return nil, err
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			address := scanner.Text()
+			if !nicRe.MatchString(address) {
+				f.Close()
+				return nil, fmt.Errorf("invalid mac address")
+			}
+			macs = append(macs, address)
+		}
+
+		if err := scanner.Err(); err != nil {
+			f.Close()
+			return nil, err
+		}
+		f.Close()
+	}
+	return macs, nil
 }
 
 // loadConfig initializes and parses the config using a config file and command
@@ -490,6 +540,52 @@ func loadConfig() (*config, []string, error) {
 
 		// Always exit.
 		os.Exit(0)
+	}
+
+	// Deal with license.
+	if cfg.SiteID == "" || cfg.SiteName == "" || cfg.License == "" {
+		return nil, nil, fmt.Errorf("Must provide: siteid, sitename " +
+			"and license")
+	}
+	l, err := license.NewFromStrings(cfg.SiteID, cfg.SiteName)
+	if err != nil {
+		return nil, nil, err
+	}
+	bb, err := license.LicenseFromHuman(cfg.License)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid license: %v", err)
+	}
+	macs, err := getAllMacs()
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not obtain mac "+
+			"addressess: %v", err)
+	}
+	found := false
+	for k := range macs {
+		cfg.license, err = l.Decode(bb, 1, macs[k])
+		if err != nil {
+			log.Debugf("unrecognized mac address: %v", macs[k])
+			continue
+		} else {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, nil, fmt.Errorf("No suitable MAC address found " +
+			"for provided license")
+	}
+	if cfg.license.Expired() {
+		return nil, nil, fmt.Errorf("License expired")
+	}
+
+	// Generate journal key from license material.
+	mac := hmac.New(sha256.New, []byte(cfg.License))
+	mac.Write([]byte(cfg.SiteID))
+	mac.Write([]byte(cfg.SiteName))
+	cfg.aead, err = cp.NewX(mac.Sum(nil))
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Warn about missing config file only after all other configuration is

@@ -11,6 +11,11 @@ import (
 	cp "golang.org/x/crypto/chacha20poly1305"
 )
 
+func TestEncryptedCreateKey(t *testing.T) {
+	siteId := "1"
+	siteName := "Evil Corp"
+}
+
 func TestEncryptedJournal(t *testing.T) {
 	key := make([]byte, cp.KeySize)
 	if _, err := rand.Read(key); err != nil {

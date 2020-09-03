@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"io"
+	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -10,11 +11,6 @@ import (
 	"github.com/businessperformancetuning/perfcollector/types"
 	cp "golang.org/x/crypto/chacha20poly1305"
 )
-
-func TestEncryptedCreateKey(t *testing.T) {
-	siteId := "1"
-	siteName := "Evil Corp"
-}
 
 func TestEncryptedJournal(t *testing.T) {
 	key := make([]byte, cp.KeySize)
@@ -25,9 +21,17 @@ func TestEncryptedJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	tmpfile, err := ioutil.TempFile("", "journal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	tmpfile.Close()
+
 	p := PerfCtl{cfg: &config{
 		aead:            aead,
-		journalFilename: "journal",
+		journalFilename: tmpfile.Name(),
 	}}
 	for i := uint64(0); i < 100; i++ {
 		err = p.journal(i+1, 2, 3, types.PCCollection{

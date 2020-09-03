@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	ch "github.com/businessperformancetuning/perfcollector/channel"
+	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/parser"
@@ -577,6 +579,45 @@ func (p *PerfCtl) getNetDevices(ctx context.Context, s *session, devices []strin
 	}
 
 	return nics, nil
+}
+
+func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
+	if !util.ValidSystem(measurement.System) {
+		return fmt.Errorf("journal unsupported system: %v",
+			measurement.System)
+	}
+
+	// We only allow encrypted journals.
+	if true {
+		return journal.Journal(p.cfg.journalFilename, p.cfg.aead,
+			journal.WrapPCCollection{
+				Site:        site,
+				Host:        host,
+				Run:         run,
+				Measurement: &measurement,
+			})
+	}
+
+	// This code cannot be reached, compile time debug only to journal in
+	// plaintext.
+	filename := filepath.Join(p.cfg.DataDir, strconv.Itoa(int(site)),
+		strconv.Itoa(int(host)), strconv.Itoa(int(run)),
+		measurement.System)
+	dir := filepath.Dir(filename)
+	err := os.MkdirAll(dir, 0750)
+	if err != nil {
+		return err
+	}
+
+	// Journal in JSON to retain human readability.
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+		0640)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return json.NewEncoder(f).Encode(measurement)
 }
 
 func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address string) error {

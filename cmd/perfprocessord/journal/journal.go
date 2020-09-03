@@ -1,4 +1,4 @@
-package main
+package journal
 
 import (
 	"bytes"
@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
+	"sync"
 
 	"github.com/businessperformancetuning/perfcollector/types"
-	"github.com/businessperformancetuning/perfcollector/util"
+)
+
+var (
+	mtx sync.Mutex
 )
 
 type WrapPCCollection struct {
@@ -45,19 +47,12 @@ func decrypt(aead cipher.AEAD, nonce, ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-func journalEncrypted(f *os.File, aead cipher.AEAD, site, host, run uint64, measurement types.PCCollection) error {
-	wc := WrapPCCollection{
-		Site:        site,
-		Host:        host,
-		Run:         run,
-		Measurement: &measurement,
-	}
-
+func Journal(filename string, aead cipher.AEAD, payload interface{}) error {
 	// Compress the encoded JSON
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	e := json.NewEncoder(zw)
-	err := e.Encode(wc)
+	err := e.Encode(payload)
 	if err != nil {
 		return err
 	}
@@ -68,6 +63,16 @@ func journalEncrypted(f *os.File, aead cipher.AEAD, site, host, run uint64, meas
 	if err != nil {
 		return err
 	}
+
+	// Write to file
+	mtx.Lock()
+	defer mtx.Unlock()
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+		0640)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	_, err = f.Write(blob)
 	if err != nil {
 		return err
@@ -75,7 +80,7 @@ func journalEncrypted(f *os.File, aead cipher.AEAD, site, host, run uint64, meas
 	return nil
 }
 
-func readEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection, error) {
+func ReadEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection, error) {
 	// Read nonce + ciphertext length.
 	length := make([]byte, 4)
 	n, err := f.Read(length)
@@ -114,44 +119,4 @@ func readEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection,
 		return nil, err
 	}
 	return &wc, nil
-}
-
-func (p *PerfCtl) journal(site, host, run uint64, measurement types.PCCollection) error {
-	if !util.ValidSystem(measurement.System) {
-		return fmt.Errorf("journal unsupported system: %v",
-			measurement.System)
-	}
-
-	// We only allow encrypted journals
-	if true {
-		f, err := os.OpenFile(p.cfg.journalFilename,
-			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		return journalEncrypted(f, p.cfg.aead, site, host, run, measurement)
-	}
-
-	// This code cannot be reached, compile time debug only to journal in
-	// plaintext.
-	filename := filepath.Join(p.cfg.DataDir, strconv.Itoa(int(site)),
-		strconv.Itoa(int(host)), strconv.Itoa(int(run)),
-		measurement.System)
-	dir := filepath.Dir(filename)
-	err := os.MkdirAll(dir, 0750)
-	if err != nil {
-		return err
-	}
-
-	// Journal in JSON to retain human readability.
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY,
-		0640)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return json.NewEncoder(f).Encode(measurement)
 }

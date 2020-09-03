@@ -451,6 +451,12 @@ func loadConfig() (*config, []string, error) {
 		}
 	}
 
+	// Make sure datadir exists
+	err = os.MkdirAll(cfg.DataDir, 0750)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Hosts.
 	dedupID := make(map[string]struct{}, len(cfg.Hosts))
 	for _, v := range cfg.Hosts {
@@ -506,6 +512,7 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// We only need db commands if we are in sink mode.
+	// XXX this can go away
 	if cfg.DBURI == "" && len(remainingArgs) != 0 &&
 		remainingArgs[0] == "sink" {
 		err := fmt.Errorf("%s: must provide database URI",

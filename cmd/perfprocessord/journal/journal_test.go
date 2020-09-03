@@ -1,4 +1,4 @@
-package main
+package journal
 
 import (
 	"crypto/rand"
@@ -29,30 +29,30 @@ func TestEncryptedJournal(t *testing.T) {
 	defer os.Remove(tmpfile.Name())
 	tmpfile.Close()
 
-	p := PerfCtl{cfg: &config{
-		aead:            aead,
-		journalFilename: tmpfile.Name(),
-	}}
 	for i := uint64(0); i < 100; i++ {
-		err = p.journal(i+1, 2, 3, types.PCCollection{
-			Timestamp: time.Now(),
-			Start:     time.Now(),
-			Duration:  500 * time.Microsecond,
-			Frequency: 5 * time.Second,
-			System:    "/proc/stat",
-		})
+		err = Journal(tmpfile.Name(), aead, WrapPCCollection{
+			Site: i + 1,
+			Host: 2,
+			Run:  3,
+			Measurement: &types.PCCollection{
+				Timestamp: time.Now(),
+				Start:     time.Now(),
+				Duration:  500 * time.Microsecond,
+				Frequency: 5 * time.Second,
+				System:    "/proc/stat",
+			}})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	f, err := os.Open(p.cfg.journalFilename)
+	f, err := os.Open(tmpfile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
 	i := uint64(1)
 	for {
-		wc, err := readEncryptedJournalEntry(f, aead)
+		wc, err := ReadEncryptedJournalEntry(f, aead)
 		if err != nil {
 			if err == io.EOF {
 				break

@@ -1,79 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"compress/gzip"
-	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"os"
 
-	"github.com/businessperformancetuning/perfcollector/types"
+	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
 	"github.com/davecgh/go-spew/spew"
 	cp "golang.org/x/crypto/chacha20poly1305"
 )
-
-// XXX this needs to be shared
-type WrapPCCollection struct {
-	Site        uint64
-	Host        uint64
-	Run         uint64
-	Measurement *types.PCCollection
-}
-
-func decrypt(aead cipher.AEAD, nonce, ciphertext []byte) ([]byte, error) {
-	// Decrypt the message and check it wasn't tampered with.
-	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return plaintext, nil
-}
-
-func readEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection, error) {
-	// Read nonce + ciphertext length.
-	length := make([]byte, 4)
-	n, err := f.Read(length)
-	if err != nil {
-		return nil, err
-	}
-	if n != 4 {
-		return nil, fmt.Errorf("length short read: %v", n)
-	}
-	l := int(binary.LittleEndian.Uint32(length))
-
-	// Read nonce + ciphertext.
-	blob := make([]byte, l)
-	n, err = f.Read(blob)
-	if err != nil {
-		return nil, err
-	}
-	if n != l {
-		return nil, fmt.Errorf("short read: got %v expected %v",
-			n, l)
-	}
-
-	// Decrypt.
-	plain, err := decrypt(aead, blob[:aead.NonceSize()],
-		blob[aead.NonceSize():])
-	if err != nil {
-		return nil, err
-	}
-
-	// Decompress and decode JSON.
-	zr, err := gzip.NewReader(bytes.NewReader(plain))
-	var wc WrapPCCollection
-	jd := json.NewDecoder(zr)
-	err = jd.Decode(&wc)
-	if err != nil {
-		return nil, err
-	}
-	return &wc, nil
-}
 
 func _main() error {
 	args := os.Args
@@ -98,7 +34,7 @@ func _main() error {
 	}
 
 	for {
-		wc, err := readEncryptedJournalEntry(f, aead)
+		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
 		if err != nil {
 			return err
 		}

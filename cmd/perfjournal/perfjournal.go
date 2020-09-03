@@ -82,7 +82,8 @@ func _main() error {
 			"<license> <filename>", args[0])
 	}
 
-	// Generate journal key from license material.
+	// Generate journal key from license material. There is no function for
+	// this in order to obfudcate this terrible trick.
 	mac := hmac.New(sha256.New, []byte(args[3]))
 	mac.Write([]byte(args[1]))
 	mac.Write([]byte(args[2]))

@@ -262,9 +262,9 @@ func loadConfig() (*config, []string, error) {
 		os.Exit(0)
 	}
 
-	// Update the home directory for stakepoold if specified. Since the
-	// home directory is updated, other variables need to be updated to
-	// reflect the new changes.
+	// Update the home directory if specified. Since the home directory is
+	// updated, other variables need to be updated to reflect the new
+	// changes.
 	if preCfg.HomeDir != "" {
 		cfg.HomeDir, _ = filepath.Abs(preCfg.HomeDir)
 
@@ -315,7 +315,8 @@ func loadConfig() (*config, []string, error) {
 
 	// Create the home directory if it doesn't already exist.
 	funcName := "loadConfig"
-	err = os.MkdirAll(sharedconfig.DefaultHomeDir, 0700)
+	cfg.HomeDir = cleanAndExpandPath(cfg.HomeDir)
+	err = os.MkdirAll(cfg.HomeDir, 0700)
 	if err != nil {
 		// Show a nicer error message if it's because a symlink is
 		// linked to a directory that does not exist (probably because

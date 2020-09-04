@@ -877,9 +877,6 @@ func _main() error {
 		sessions: make(map[string]*session),
 	}
 
-	log.Infof("Version         : %v", version())
-	log.Infof("Home dir        : %v", p.cfg.HomeDir)
-
 	// Execute, this needs to come out
 	if len(args) != 0 {
 		return p.handleArgs(args)
@@ -890,6 +887,12 @@ func _main() error {
 	case "postgres":
 		postgres.UseLogger(dbLog)
 		p.db, err = postgres.New(database.Name, p.cfg.DBURI)
+	case "":
+		// Allow no db if we are journaling.
+		if !p.cfg.Journal {
+			return fmt.Errorf("Must specify data recording method" +
+				" selected (journal and/or database")
+		}
 	default:
 		return fmt.Errorf("Invalid database type: %v", p.cfg.DB)
 	}
@@ -897,21 +900,33 @@ func _main() error {
 		return err
 	}
 
-	// Open and Close db on exit.
-	if err := p.db.Open(); err != nil {
-		return err
+	log.Infof("Version: %v", version())
+	log.Infof("Home dir: %v", p.cfg.HomeDir)
+
+	if p.db != nil {
+		// Open and Close db on exit.
+		if err := p.db.Open(); err != nil {
+			return err
+		}
+		defer p.db.Close()
+		log.Infof("Database version: %v", database.Version)
 	}
-	defer p.db.Close()
-	log.Infof("Database version: %v", database.Version)
+
+	if p.cfg.Journal {
+		log.Infof("Journal: %v", p.cfg.journalFilename)
+	}
 
 	// Context.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var eg errgroup.Group
-	for k, v := range p.cfg.HostsId {
-		log.Infof("Connecting %v:%v/%v", v.Site, v.Host, k)
+	for k := range p.cfg.HostsId {
+		// Copy hosts because it'll race in the go routine.
+		h := p.cfg.HostsId[k]
+		hh := k
+		log.Infof("Connecting %v:%v/%v", h.Site, h.Host, hh)
 		eg.Go(func() error {
-			err := p.sink(ctx, v.Site, v.Host, k)
+			err := p.sink(ctx, h.Site, h.Host, hh)
 			if err != nil {
 				cancel()
 			}

@@ -103,8 +103,8 @@ type PerfCtl struct {
 }
 
 func (p *PerfCtl) send(s *session, cmd types.PCCommand, callback chan interface{}) error {
-	log.Tracef("send")
-	defer log.Tracef("send exit")
+	log.Tracef("send %v %v", cmd.Cmd, s.address)
+	defer log.Tracef("send exit %v %v", cmd.Cmd, s.address)
 
 	// Hnadle tag
 	s.Lock()
@@ -127,7 +127,7 @@ func (p *PerfCtl) send(s *session, cmd types.PCCommand, callback chan interface{
 		return nil
 	}
 
-	log.Tracef("send %v", spew.Sdump(cmd))
+	log.Tracef("send %v: %v", s.address, spew.Sdump(cmd))
 
 	_, err = s.channel.SendRequest(types.PCCmd, false, blob)
 
@@ -135,8 +135,8 @@ func (p *PerfCtl) send(s *session, cmd types.PCCommand, callback chan interface{
 }
 
 func (p *PerfCtl) sendAndWait(ctx context.Context, s *session, cmd types.PCCommand) (interface{}, error) {
-	log.Tracef("sendAndWait")
-	defer log.Tracef("sendAndWait exit")
+	log.Tracef("sendAndWait %v", s.address)
+	defer log.Tracef("sendAndWait exit %v", s.address)
 
 	// Callback channel
 	c := make(chan interface{})
@@ -626,7 +626,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 
 	s, err := p.connect(ctx, address)
 	if err != nil {
-		log.Errorf("sendAndWait connect: %v", err)
+		log.Errorf("sinkLoop connect %v:%v: %v", site, host, err)
 		return err
 	}
 
@@ -634,7 +634,8 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 
 	defer func() {
 		if err := p.unregister(address); err != nil {
-			log.Errorf("sink exit unregister: %v", err)
+			log.Errorf("sink exit unregister %v:%v: %v",
+				site, host, err)
 		}
 	}()
 
@@ -646,7 +647,8 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		Cmd: types.PCRegisterSinkCmd,
 	})
 	if err != nil {
-		log.Errorf("sendAndWait connect: %v", err)
+		log.Errorf("sinkLoop sendAndWait connect %v:%v: %v",
+			site, host, err)
 		return terminalError{err: err}
 	}
 
@@ -705,7 +707,8 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		// batch the writes.
 
 		if p.cfg.Journal {
-			log.Tracef("sinkLoop journal: %v", m.System)
+			log.Tracef("sinkLoop journal %v:%v: %v",
+				site, host, m.System)
 			err := p.journal(site, host, runID, m)
 			if err != nil {
 				return fmt.Errorf("sinkLoop journal %v:%v: %v",
@@ -719,7 +722,8 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 		case "/proc/stat":
 			s, err := parser.ProcessStat([]byte(m.Measurement))
 			if err != nil {
-				log.Errorf("could not process stat: %v", err)
+				log.Errorf("sinkLoop could not process stat "+
+					"%v:%v: %v", site, host, err)
 				continue
 			}
 			if previousStat == nil {
@@ -730,49 +734,54 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				m.Start.Unix(), int64(m.Duration), previousStat,
 				&s)
 			if err != nil {
-				log.Errorf("sinkLoop CubeStat: %v", err)
+				log.Errorf("sinkLoop CubeStat %v:%v: %v",
+					site, host, err)
 				continue
 			}
 			previousStat = &s
 
 			err = p.db.StatInsert(ctx, cs)
 			if err != nil {
-				log.Errorf("sinkLoop CubeStat insert: %v", err)
+				log.Errorf("sinkLoop CubeStat insert %v:%v: %v",
+					site, host, err)
 			}
 			continue
 
 		case "/proc/meminfo":
 			s, err := parser.ProcessMeminfo([]byte(m.Measurement))
 			if err != nil {
-				log.Errorf("could not process meminfo: %v", err)
+				log.Errorf("sinkLoop could not process "+
+					"meminfo %v:%v: %v", site, host, err)
 				continue
 			}
 			mi, err := parser.CubeMeminfo(runID, m.Timestamp.Unix(),
 				m.Start.Unix(), int64(m.Duration), &s)
 			if err != nil {
-				log.Errorf("sinkLoop CubeMeminfo: %v", err)
+				log.Errorf("sinkLoop CubeMeminfo %v:%v: %v",
+					site, host, err)
 				continue
 			}
 
 			err = p.db.MeminfoInsert(ctx, mi)
 			if err != nil {
-				log.Errorf("sinkLoop MeminfoInsert insert: %v",
-					err)
+				log.Errorf("sinkLoop MeminfoInsert insert "+
+					"%v:%v: %v", site, host, err)
 			}
 			continue
 
 		case "/proc/net/dev":
 			n, err := parser.ProcessNetDev([]byte(m.Measurement))
 			if err != nil {
-				log.Errorf("could not process netdev: %v", err)
+				log.Errorf("sinkLoop could not process netdev "+
+					"%v:%v: %v", site, host, err)
 				continue
 			}
 
 			// See if we need to cache NIC details
 			err = fillCache(n)
 			if err != nil {
-				log.Errorf("could not process fillCache: %v",
-					err)
+				log.Errorf("sinkLoop could not process "+
+					"fillCache %v:%v: %v", site, host, err)
 				continue
 			}
 
@@ -785,23 +794,24 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				m.Start.Unix(), int64(m.Duration),
 				previousNet, n, tvi, nicCache)
 			if err != nil {
-				log.Errorf("sigkLoop CubeNetDev: %v", err)
+				log.Errorf("sigkLoop CubeNetDev %v:%v: %v",
+					site, host, err)
 				continue
 			}
 			previousNet = n
 
 			err = p.db.NetDevInsert(ctx, nd)
 			if err != nil {
-				log.Errorf("sinkLoop NetDevInsert insert: %v",
-					err)
+				log.Errorf("sinkLoop NetDevInsert insert "+
+					"%v:%v: %v", site, host, err)
 			}
 			continue
 
 		case "/proc/diskstats":
 			d, err := parser.ProcessDiskstats([]byte(m.Measurement))
 			if err != nil {
-				log.Errorf("could not process diskstats: %v",
-					err)
+				log.Errorf("sinkLoop could not process "+
+					"diskstats %v:%v: %v", site, host, err)
 				continue
 			}
 			if previousDisk == nil {
@@ -813,20 +823,22 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				m.Timestamp.Unix(), m.Start.Unix(),
 				int64(m.Duration), previousDisk, d, tvi)
 			if err != nil {
-				log.Errorf("sigkLoop CubeDiskstats: %v", err)
+				log.Errorf("sigkLoop CubeDiskstats %v:%v: %v",
+					site, host, err)
 				continue
 			}
 			previousDisk = d
 
 			err = p.db.DiskstatInsert(ctx, ds)
 			if err != nil {
-				log.Errorf("sinkLoop DiskstatInsert insert: %v",
-					err)
+				log.Errorf("sinkLoop DiskstatInsert insert "+
+					"%v:%v: %v", site, host, err)
 			}
 			continue
 
 		default:
-			log.Errorf("unknown system: %v", m.System)
+			log.Errorf("unknown system %v:%v: %v",
+				site, host, m.System)
 		}
 	}
 }

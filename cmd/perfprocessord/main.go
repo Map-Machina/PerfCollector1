@@ -148,6 +148,7 @@ func (p *PerfCtl) sendAndWait(ctx context.Context, s *session, cmd types.PCComma
 
 	reply, readErr := ch.Read(ctx, c)
 	if readErr != nil {
+		panic(readErr)
 		return nil, readErr
 	}
 
@@ -347,9 +348,9 @@ func argAsStringSlice(arg string, args map[string]string) ([]string, error) {
 }
 
 func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) error {
-	log.Tracef("singleCommand: args %v", args)
+	log.Tracef("singleCommand %v: args %v", s.address, args)
 	defer func() {
-		log.Tracef("singleCommand exit: args %v", args)
+		log.Tracef("singleCommand exit %v: args %v", s.address, args)
 	}()
 
 	if len(args) == 0 {
@@ -374,6 +375,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		if !ok {
 			return fmt.Errorf("status reply invalid type: %T", reply)
 		}
+		fmt.Printf("Status             : %v\n", s.address)
 		fmt.Printf("Sink enabled       : %v\n", r.SinkEnabled)
 		fmt.Printf("Measurement enabled: %v\n", r.MeasurementEnabled)
 		if r.MeasurementEnabled && r.StartCollection != nil {
@@ -481,18 +483,19 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var eg errgroup.Group
-	for k, v := range p.cfg.HostsId {
-		log.Infof("Connecting %v:%v/%v", v.Site, v.Host, k)
+	for k := range p.cfg.HostsId {
+		// Copy hosts because it'll race in the go routine.
+		h := p.cfg.HostsId[k]
+		hh := k
+		log.Debugf("Connecting %v:%v/%v", h.Site, h.Host, hh)
 
-		session, err := p.connect(ctx, k)
+		session, err := p.connect(ctx, hh)
 		if err != nil {
 			log.Errorf("connect: %v", err)
 			continue
 		}
 
-		log.Infof("Connected to: %v:%v/%v", v.Site, v.Host, k)
-
-		// XXX this is probably not right with a single failing command
+		log.Debugf("Connected to: %v:%v/%v", h.Site, h.Host, hh)
 
 		// Setup out of band handler.
 		eg.Go(func() error {
@@ -502,7 +505,6 @@ func (p *PerfCtl) handleArgs(args []string) error {
 					log.Errorf("handleArgs oobHandler: %v",
 						err)
 				}
-				cancel()
 			}
 			return err
 		})
@@ -518,8 +520,11 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	}
 
 	// Wait for exit
-	log.Infof("Waiting for commands to complete")
+	log.Debugf("Waiting for commands to complete")
 	eg.Wait()
+
+	// Shut...It...All...Down...
+	cancel()
 
 	return nil
 }

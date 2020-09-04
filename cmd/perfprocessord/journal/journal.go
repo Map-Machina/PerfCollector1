@@ -18,13 +18,6 @@ var (
 	mtx sync.Mutex
 )
 
-type WrapPCCollection struct {
-	Site        uint64
-	Host        uint64
-	Run         uint64
-	Measurement *types.PCCollection
-}
-
 func encrypt(aead cipher.AEAD, msg []byte) ([]byte, error) {
 	// Select a random nonce, and leave capacity for the ciphertext.
 	length := 4 + aead.NonceSize() + len(msg) + aead.Overhead()
@@ -78,6 +71,14 @@ func Journal(filename string, aead cipher.AEAD, payload interface{}) error {
 		return err
 	}
 	return nil
+}
+
+// XXX this really doesn't belong here.
+type WrapPCCollection struct {
+	Site        uint64
+	Host        uint64
+	Run         uint64
+	Measurement *types.PCCollection
 }
 
 func ReadEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection, error) {

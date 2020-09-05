@@ -27,6 +27,7 @@ import (
 	"github.com/businessperformancetuning/perfcollector/util"
 	flags "github.com/jessevdk/go-flags"
 	cp "golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -86,6 +87,9 @@ type config struct {
 	license  *license.LicenseKey
 
 	HostsId map[string]HostIdentifier
+
+	// SSH
+	fingerprint string
 }
 
 // serviceOptions defines the configuration options for the rpc as a service
@@ -594,6 +598,22 @@ func loadConfig() (*config, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Verify we have a valid ssh key file.
+	signer, err := util.SSHKey(cfg.SSHKeyFile)
+	if err != nil {
+		err = util.NewSSHKeyPair(cfg.SSHKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Read signer.
+		signer, err = util.SSHKey(cfg.SSHKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	cfg.fingerprint = ssh.FingerprintSHA256(signer.PublicKey())
 
 	// Warn about missing config file only after all other configuration is
 	// done.  This prevents the warning on help messages and invalid

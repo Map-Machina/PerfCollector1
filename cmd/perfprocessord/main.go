@@ -919,6 +919,7 @@ func _main() error {
 
 	log.Infof("Version: %v", version())
 	log.Infof("Home dir: %v", p.cfg.HomeDir)
+	log.Infof("SSH fingerprint: %v", p.cfg.fingerprint)
 
 	if p.db != nil {
 		// Open and Close db on exit.

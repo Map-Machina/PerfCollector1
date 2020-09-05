@@ -392,6 +392,21 @@ func loadConfig() (*config, []string, error) {
 	// duplicate addresses.
 	cfg.Listeners = normalizeAddresses(cfg.Listeners, port)
 
+	// Verify we have a valid ssh key file.
+	_, err = util.SSHKey(cfg.SSHKeyFile)
+	if err != nil {
+		err = util.NewSSHKeyPair(cfg.SSHKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Read to ensure success.
+		_, err = util.SSHKey(cfg.SSHKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	// Verify that we have at least one key set.
 	if len(cfg.AllowedKeys) == 0 {
 		return nil, nil, fmt.Errorf("must set at least one allowed key " +

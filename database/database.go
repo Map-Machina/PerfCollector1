@@ -78,8 +78,8 @@ CREATE TABLE stat (
 	runid			BIGSERIAL NOT NULL,
 
 	timestamp		BIGINT NOT NULL,
-	Start			BIGINT NOT NULL,
-	Duration		BIGINT NOT NULL,
+	start			BIGINT NOT NULL,
+	duration		BIGINT NOT NULL,
 
 	cpu			SMALLINT NOT NULL,
 	usert			NUMERIC,
@@ -97,8 +97,8 @@ CREATE TABLE meminfo (
 	runid			BIGSERIAL NOT NULL,
 
 	timestamp		BIGINT NOT NULL,
-	Start			BIGINT NOT NULL,
-	Duration		BIGINT NOT NULL,
+	start			BIGINT NOT NULL,
+	duration		BIGINT NOT NULL,
 
 	memfree			BIGSERIAL,
 	memavailable		BIGSERIAL,
@@ -120,8 +120,8 @@ CREATE TABLE netdev (
 	runid			BIGSERIAL NOT NULL,
 
 	timestamp		BIGINT NOT NULL,
-	Start			BIGINT NOT NULL,
-	Duration		BIGINT NOT NULL,
+	start			BIGINT NOT NULL,
+	duration		BIGINT NOT NULL,
 
 	name			TEXT,
 	rxpackets		NUMERIC,

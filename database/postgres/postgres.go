@@ -74,8 +74,7 @@ func (p *postgres) Create() error {
 func (p *postgres) MeasurementsInsert(ctx context.Context, m *database.Measurements) (uint64, error) {
 	log.Tracef("postgres.MeasurementsInsert")
 
-	// XXX USE CTX
-	rows, err := p.db.NamedQuery(database.InsertMeasurements, m)
+	rows, err := p.db.NamedQueryContext(ctx, database.InsertMeasurements, m)
 	if err != nil {
 		return 0, err
 	}

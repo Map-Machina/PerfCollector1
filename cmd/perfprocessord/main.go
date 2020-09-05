@@ -312,41 +312,6 @@ func (p *PerfCtl) connect(ctx context.Context, address string) (*session, error)
 	return session, nil
 }
 
-func parseArgs(args []string) (map[string]string, error) {
-	m := make(map[string]string, len(args))
-	for k := range args {
-		a := strings.SplitN(args[k], "=", 2)
-		if len(a) == 0 {
-			return nil, fmt.Errorf("no argument: %v", args[k])
-		}
-		a1 := a[0]
-		var a2 string
-		if len(a) > 1 {
-			a2 = a[1]
-		}
-		if _, ok := m[a1]; ok {
-			return nil, fmt.Errorf("duplicate argument: %v", a1)
-		}
-		m[a1] = a2
-	}
-	return m, nil
-}
-
-func argAsInt(arg string, args map[string]string) (int, error) {
-	if a, ok := args[arg]; ok {
-		return strconv.Atoi(a)
-	}
-	return 0, fmt.Errorf("invalid argument: %v", arg)
-}
-
-func argAsStringSlice(arg string, args map[string]string) ([]string, error) {
-	if a, ok := args[arg]; ok {
-		val := strings.Split(a, ",")
-		return val, nil
-	}
-	return nil, fmt.Errorf("invalid argument: %v", arg)
-}
-
 func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) error {
 	log.Tracef("singleCommand %v: args %v", s.address, args)
 	defer func() {
@@ -358,7 +323,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 	}
 
 	// Parse arguments
-	a, err := parseArgs(args)
+	a, err := util.ParseArgs(args)
 	if err != nil {
 		return err
 	}
@@ -390,15 +355,15 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		}
 
 	case "start":
-		frequency, err := argAsInt("frequency", a)
+		frequency, err := util.ArgAsInt("frequency", a)
 		if err != nil {
 			frequency = 5
 		}
-		queueDepth, err := argAsInt("depth", a)
+		queueDepth, err := util.ArgAsInt("depth", a)
 		if err != nil {
 			queueDepth = 1000
 		}
-		systems, err := argAsStringSlice("systems", a)
+		systems, err := util.ArgAsStringSlice("systems", a)
 		if err != nil {
 			systems = []string{
 				"/proc/stat",
@@ -428,7 +393,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 		}
 
 	case "once":
-		systems, err := argAsStringSlice("systems", a)
+		systems, err := util.ArgAsStringSlice("systems", a)
 		if err != nil {
 			systems = []string{
 				"/proc/cpuinfo",

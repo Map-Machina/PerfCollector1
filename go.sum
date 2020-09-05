@@ -16,6 +16,8 @@ github.com/businessperformancetuning/license v0.0.0-20200902233858-9f9e436dffeb 
 github.com/businessperformancetuning/license v0.0.0-20200902233858-9f9e436dffeb/go.mod h1:TPuVe0gJQb7pzQZeZMs9BabOnZFO/mVQQFBCdusM650=
 github.com/businessperformancetuning/license v0.0.0-20200903120812-66f3bbe9e2c4 h1:bHhtyrZjAKV/tYj1XPgDdGn/u78acrLVAiE+87lItmo=
 github.com/businessperformancetuning/license v0.0.0-20200903120812-66f3bbe9e2c4/go.mod h1:TPuVe0gJQb7pzQZeZMs9BabOnZFO/mVQQFBCdusM650=
+github.com/businessperformancetuning/license v0.0.0-20200905212554-7b6914fa9db8 h1:S4TJokBUTqyUktiThYIqXzQxXkUT14BnVOAcSGFqq30=
+github.com/businessperformancetuning/license v0.0.0-20200905212554-7b6914fa9db8/go.mod h1:TPuVe0gJQb7pzQZeZMs9BabOnZFO/mVQQFBCdusM650=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -75,6 +77,8 @@ github.com/jessevdk/go-flags v1.4.0 h1:4IU2WS7AumrZ/40jfhf4QVDMsQwqA7VEHozFRrGAR
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
 github.com/jmoiron/sqlx v1.2.0 h1:41Ip0zITnmWNR/vHV+S4m+VoUivnWY5E4OJfLZjCJMA=
 github.com/jmoiron/sqlx v1.2.0/go.mod h1:1FEQNm3xlJgrMD+FBdI9+xvCksHtbpVBBw5dYhBSsks=
+github.com/jrick/flagfile v0.0.0-20200516155228-eacdea149b40 h1:ppGui2fpZ16oOGpfRqj5QZD1BQvOZjVZgByvsiJmYtM=
+github.com/jrick/flagfile v0.0.0-20200516155228-eacdea149b40/go.mod h1:l0b+mDW9wrDmbzSWDxL/8YGmjZQqrKHImR8/r5hRPkU=
 github.com/jrick/logrotate v1.0.0 h1:lQ1bL/n9mBNeIXoTUoYRlK4dHuNJVofX9oWqBtPnSzI=
 github.com/jrick/logrotate v1.0.0/go.mod h1:LNinyqDIJnpAur+b8yyulnQw/wDuN1+BYKlTRt3OuAQ=
 github.com/json-iterator/go v1.1.6/go.mod h1:+SdeFBvtyEkXs7REEP0seUULqWtbJapLOCVDaaPEHmU=

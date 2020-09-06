@@ -46,17 +46,24 @@ type config struct {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `Usage of perflicense:
-  perflicense [flags] command <args...>
+  perflicense [flags] action <args...>
 Flags:
   -C value
         config file
   -v    show version and exit
-  -createdb
+  --createdb
 	Create database for first time use
-  -db string
+  --db string
         Database backend (default postgres)
-  -dburi
+  --dburi
         Database uri
+Actions:
+  useradd email=<emailaddress> admin=<bool>
+	Add user that is allowed to create licenses. Example:
+	email=marco@peereboom.us admin=false
+  licenseadd siteid=<id> sitename=<name> mac=<mac_address> duration=<in_days> user=Muser_id>
+	Add license for a site. Example:
+	siteid=1337 sitename="Evil Corp" mac="00:22:4d:81:a1:41" duration=10 user=1
 `)
 	os.Exit(2)
 }

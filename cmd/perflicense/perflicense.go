@@ -61,9 +61,12 @@ Actions:
   useradd email=<emailaddress> admin=<bool>
 	Add user that is allowed to create licenses. Example:
 	email=marco@peereboom.us admin=false
+  siteadd name=<name>
+	Add site. Example
+	name="Evil Corp LLC."
   licenseadd siteid=<id> sitename=<name> mac=<mac_address> duration=<in_days> user=Muser_id>
 	Add license for a site. Example:
-	siteid=1337 sitename="Evil Corp" mac="00:22:4d:81:a1:41" duration=10 user=1
+	siteid=1337 sitename="Evil Database App" mac="00:22:4d:81:a1:41" duration=10 user=1
 `)
 	os.Exit(2)
 }
@@ -182,6 +185,22 @@ func userAdd(ctx context.Context, db database.Database, a map[string]string) err
 		return fmt.Errorf("user insert error: %v", err)
 	}
 	fmt.Printf("User id: %v\n", id)
+	return nil
+}
+
+func siteAdd(ctx context.Context, db database.Database, a map[string]string) error {
+	name, err := util.ArgAsString("name", a)
+	if err != nil {
+		return err
+	}
+	site := database.Site{
+		Name: name,
+	}
+	id, err := db.SiteInsert(ctx, &site)
+	if err != nil {
+		return fmt.Errorf("site insert error: %v", err)
+	}
+	fmt.Printf("Site id: %v\n", id)
 	return nil
 }
 
@@ -309,6 +328,9 @@ func _main() error {
 	switch args[0] {
 	case "useradd":
 		return userAdd(ctx, db, a)
+
+	case "siteadd":
+		return siteAdd(ctx, db, a)
 
 	case "licenseadd":
 		return licenseAdd(ctx, db, a)

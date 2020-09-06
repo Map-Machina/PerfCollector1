@@ -64,16 +64,31 @@ User id: 1
 Make note of the returned user id. In this example it is `1`. We will use this
 number to identify who created a license later in this document.
 
+## Create site/customer
+
+A site is defined as a customer, for example, "Evil Corp LLC".
+```
+$  perflicense siteadd name="Evil Corp LLC"
+Site id: 1
+```
+
+Make note of the returned site id. In this example it is `1`. We will use this
+number to identify the customer later in this document.
+
+
 ## Create license
 
 `perflicense` generates a license for `perfprocessord`. Pick one non-zero mac
 address of the target machine.
 
-Create or look up `site id` and `site name`.
+`site id` is the ID to the customer.
+
+`site name` is either the site name or application name, for example, "Evil
+Database App"
 
 For example:
 ```
-$ perflicense licenseadd siteid=1337 sitename="Evil Corp" mac="00:22:4d:81:a1:41" duration=10 user=1
+$ perflicense licenseadd siteid=1 sitename="Evil Database App" mac="00:22:4d:81:a1:41" duration=10 user=1
 version not specified, defaulting to 1
 # License information
 siteid=1337

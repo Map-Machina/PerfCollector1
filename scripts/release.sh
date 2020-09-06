@@ -31,8 +31,11 @@ for i in $SYS; do
     mkdir $PACKAGE-$i-$TAG
     cd $PACKAGE-$i-$TAG
     echo "Building:" $OS $ARCH
-    env GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfcollectord
-    env GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfprocessord
+# Add CGO_ENABLED=0 so that the files are statically linked
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfcollectord
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfprocessord
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perflicense
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfjournal
     #cp $GPATH/src/github.com/businessperformancetuning/perfcollector/cmd/perfcollectord/perfcollectord.conf .
     cd ..
     if [[ $OS = "windows" ]]; then

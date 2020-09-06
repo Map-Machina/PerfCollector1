@@ -39,6 +39,7 @@ func versionString() string {
 type config struct {
 	Config      flag.Value
 	ShowVersion bool
+	CreateDB    bool
 	DB          string
 	DBURI       string
 }
@@ -50,6 +51,8 @@ Flags:
   -C value
         config file
   -v    show version and exit
+  -createdb
+	Create database for first time use
   -db string
         Database backend (default postgres)
   -dburi
@@ -64,6 +67,7 @@ func (c *config) FlagSet() *flag.FlagSet {
 	c.Config = configParser.ConfigFlag(fs)
 	fs.Var(c.Config, "C", "config file")
 	fs.BoolVar(&c.ShowVersion, "v", false, "")
+	fs.BoolVar(&c.CreateDB, "createdb", false, "")
 	fs.StringVar(&c.DB, "db", "postgres", "")
 	fs.StringVar(&c.DBURI, "dburi", "", "")
 	fs.Usage = usage
@@ -120,7 +124,11 @@ func loadConfig() (*config, []string, error) {
 		}
 		args = args[2:]
 	} else if fileExists(defaultConfigFile) {
-		cfg.Config.Set(defaultConfigFile)
+		err := cfg.Config.Set(defaultConfigFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	fs.Parse(args)
 
@@ -130,6 +138,19 @@ func loadConfig() (*config, []string, error) {
 	if cfg.ShowVersion {
 		fmt.Printf("%s version %s (Go version %s %s/%s)\n", appName,
 			versionString(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		os.Exit(0)
+	}
+
+	if cfg.CreateDB {
+		db, err := postgres.New("license", cfg.DBURI)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "db new: %v\n", err)
+			os.Exit(1)
+		}
+		if err := db.Create(); err != nil {
+			fmt.Fprintf(os.Stderr, "db create: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 

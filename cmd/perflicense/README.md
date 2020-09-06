@@ -54,7 +54,7 @@ Note the `dbname=license` in `--dburi`.
 
 The license tool records which individual created a license and when. These
 users are different from the database user (think user that logs in over a
-website and does this work whereas the databse user is what runs the service).
+website and does this work whereas the database user is what runs the service).
 
 ```
 $ perflicense useradd email=marco@peereboom.us admin=true
@@ -67,7 +67,7 @@ number to identify who created a license later in this document.
 ## Create license
 
 `perflicense` generates a license for `perfprocessord`. Pick one non-zero mac
-address of the machine.
+address of the target machine.
 
 Create or look up `site id` and `site name`.
 

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
 	"github.com/businessperformancetuning/perfcollector/parser"
@@ -31,11 +33,13 @@ func versionString() string {
 type config struct {
 	Config      flag.Value
 	ShowVersion bool
+	Verbose     bool
 	SiteID      uint
+	Mode        string
 	SiteName    string
 	License     string
 	InputFile   string
-	OutputDir   string
+	Output      string
 }
 
 func usage() {
@@ -44,7 +48,10 @@ func usage() {
 Flags:
   -C value
         config file
-  -v    show version and exit
+  -v    verbose
+  -V	Show version and exit
+  --mode string
+	Output mode: csv, json (default csv)
   --siteid unsigned integer
 	Numerical site id, e.g. 1
   --sitename string
@@ -54,7 +61,8 @@ Flags:
   --input string
 	Input directory, e.g. ~/journal
   --output string
-	Output directory, e.g. ~/datadump
+	Output file or directory depending on mode, - outputs to stdout in JSON mode
+	e.g. ~/datadump.csv or ~/journal.json
 `)
 	os.Exit(2)
 }
@@ -64,12 +72,14 @@ func (c *config) FlagSet() *flag.FlagSet {
 	configParser := flagfile.Parser{AllowUnknown: false}
 	c.Config = configParser.ConfigFlag(fs)
 	fs.Var(c.Config, "C", "config file")
-	fs.BoolVar(&c.ShowVersion, "v", false, "")
+	fs.BoolVar(&c.ShowVersion, "V", false, "")
+	fs.BoolVar(&c.Verbose, "v", false, "")
 	fs.UintVar(&c.SiteID, "siteid", 0, "")
+	fs.StringVar(&c.Mode, "mode", "csv", "")
 	fs.StringVar(&c.SiteName, "sitename", "", "")
 	fs.StringVar(&c.License, "license", "", "")
 	fs.StringVar(&c.InputFile, "input", "", "")
-	fs.StringVar(&c.OutputDir, "output", "", "")
+	fs.StringVar(&c.Output, "output", "", "")
 	fs.Usage = usage
 	return fs
 }
@@ -174,18 +184,21 @@ func loadConfig() (*config, []string, error) {
 	}
 	cfg.InputFile = cleanAndExpandPath(cfg.InputFile)
 
-	if cfg.OutputDir == "" {
+	if cfg.Output == "" {
 		fmt.Fprintln(os.Stderr, "Must provide --output")
 		os.Exit(1)
 	}
-	cfg.OutputDir = cleanAndExpandPath(cfg.OutputDir)
+	cfg.Output = cleanAndExpandPath(cfg.Output)
 
 	return cfg, fs.Args(), nil
 }
 
 var (
 	// map key site_host_run_system
-	seen = make(map[string]*journal.WrapPCCollection)
+	previousCache = make(map[string]*journal.WrapPCCollection)
+
+	// map key is filename
+	fileCache = make(map[string]*os.File)
 )
 
 func constructHeader(wc *journal.WrapPCCollection) (string, error) {
@@ -202,7 +215,8 @@ func constructHeader(wc *journal.WrapPCCollection) (string, error) {
 			"txcmp/s,rxmcst/s,%ifutil"
 	case "/proc/diskstats":
 		mHdr = "DEV,tps,rtps,wtps,dtps,bread/s,bwrtn/s,bdscd/s"
-	//case "/proc/loadavg":
+	case "/proc/loadavg":
+		// XXX do notthing
 	default:
 		return "", fmt.Errorf("unsupported system: %v",
 			wc.Measurement.System)
@@ -216,7 +230,16 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 		return fmt.Errorf("unexpected site: %v", cur.Site)
 	}
 
-	// Construct map key
+	// XXX work around trailing /
+	// XXX FIXME
+	if cur.Measurement.System == "/proc/net/dev/" {
+		cur.Measurement.System = "/proc/net/dev"
+	}
+	if cur.Measurement.System == "/proc/loadavg" {
+		return nil
+	}
+
+	// Construct previousCache map key
 	name := strconv.FormatUint(cur.Site, 10) + "_" +
 		strconv.FormatUint(cur.Host, 10) + "_" +
 		strconv.FormatUint(cur.Run, 10) + "_" +
@@ -225,18 +248,38 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 		prev *journal.WrapPCCollection
 		ok   bool
 	)
-	if prev, ok = seen[name]; !ok {
-		// Write header and store previous measurement.
-		seen[name] = cur
+	if prev, ok = previousCache[name]; !ok {
+		// Store as previous measurement.
+		previousCache[name] = cur
+		return nil
+	}
 
-		// Create dirs. There is some overlap but for now just do it
-		// all the time. Cache this and be more clever later.
-		dir := filepath.Join(cfg.OutputDir,
+	var (
+		f *os.File
+	)
+	filename := filepath.Join(cfg.Output, cur.Measurement.System)
+	if f, ok = fileCache[filename]; !ok {
+		// File not seen, create file, write header and cache
+
+		// Create dirs.
+		dir := filepath.Join(cfg.Output,
 			filepath.Dir(cur.Measurement.System))
 		err := os.MkdirAll(dir, 0754)
 		if err != nil {
 			return err
 		}
+
+		// Overwrite old files.
+		file := filepath.Join(cfg.Output, cur.Measurement.System)
+		if cfg.Verbose {
+			fmt.Printf("open %v\n", file)
+		}
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY|os.O_CREATE|
+			os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+		fileCache[file] = f
 
 		// Fetch header
 		header, err := constructHeader(cur)
@@ -244,27 +287,9 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 			return err
 		}
 
-		// Overwrite old files.
-		file := filepath.Join(cfg.OutputDir, cur.Measurement.System)
-		f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC,
-			0644)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
 		_, err = fmt.Fprintf(f, "%v\n", header)
 		return err
 	}
-
-	// Open file
-	// XXX cache the open files
-	file := filepath.Join(cfg.OutputDir, cur.Measurement.System)
-	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 
 	switch cur.Measurement.System {
 	case "/proc/stat":
@@ -291,8 +316,8 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 				r[k].IOWait, r[k].Steal, r[k].Idle)
 		}
 
-		// Mark as seen
-		seen[name] = cur
+		// Store cur into previousCache
+		previousCache[name] = cur
 
 	case "/proc/meminfo":
 		// MemInfo isn't differential so just toss first measurement.
@@ -341,8 +366,8 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 				r[k].TxCompressed, r[k].RxMulticast, r[k].IfUtil)
 		}
 
-		// Mark as seen
-		seen[name] = cur
+		// Store cur into previousCache
+		previousCache[name] = cur
 
 	case "/proc/diskstats":
 		// XXX don't convert prev again, fix
@@ -371,13 +396,24 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 				r[k].Dtps, r[k].Bread, r[k].Bwrtn, r[k].Bdscd)
 		}
 
-		// Mark as seen
-		seen[name] = cur
+		// Store cur into previousCache
+		previousCache[name] = cur
 
 	default:
 	}
 
 	return nil
+}
+
+var jsonFile *os.File
+
+func doJSON(cfg *config, cur *journal.WrapPCCollection) error {
+	b, err := json.Marshal(cur)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(jsonFile, "%v\n", string(b))
+	return err
 }
 
 func _main() error {
@@ -402,23 +438,51 @@ func _main() error {
 	}
 
 	type modeT int
-	const modeCSV = 1
-	mode := modeCSV
+	const (
+		modeInvalid = 0
+		modeCSV     = 1
+		modeJSON    = 2
+	)
+	mode := modeInvalid
+
+	switch cfg.Mode {
+	case "csv":
+		mode = modeCSV
+	case "json":
+		mode = modeJSON
+	default:
+		return fmt.Errorf("invalid mode: %v", cfg.Mode)
+	}
+
 	if mode == modeCSV {
-		if !fileExists(cfg.OutputDir) {
+		if !fileExists(cfg.Output) {
 			return fmt.Errorf("output dir does not exist: %v",
-				cfg.OutputDir)
+				cfg.Output)
 		}
 	}
 
+	// Pre-process
+	switch mode {
+	case modeJSON:
+		if cfg.Output == "-" {
+			jsonFile = os.Stdout
+		} else {
+			jsonFile, err = os.Create(cfg.Output)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// Process
 	entries := 0
+	start := time.Now()
+	s := time.Now().Add(5 * time.Second)
 	for {
 		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
 		if err != nil {
 			if err == io.EOF {
-				fmt.Printf("Processed raw entries: %v\n",
-					entries)
-				return nil
+				break
 			}
 			return err
 		}
@@ -429,11 +493,35 @@ func _main() error {
 			if err != nil {
 				return err
 			}
-		default:
-			return fmt.Errorf("unknown mode: %v", mode)
+
+		case modeJSON:
+			err = doJSON(cfg, wc)
+			if err != nil {
+				return err
+			}
 		}
 
 		entries++
+
+		if cfg.Verbose && time.Now().After(s) {
+			fmt.Printf("Entries processed: %v\n", entries)
+			s = time.Now().Add(5 * time.Second)
+		}
+	}
+
+	// Post process.
+	switch mode {
+	case modeCSV:
+		// Close all files in file cache.
+		for _, v := range fileCache {
+			v.Close()
+		}
+	}
+
+	if cfg.Verbose {
+		end := time.Now()
+		fmt.Printf("Total entries processed: %v in %v\n",
+			entries, end.Sub(start))
 	}
 
 	return nil

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -491,6 +492,15 @@ func (p *PerfCollector) handleDirectories(cmd types.PCCommand) ([]byte, error) {
 		// Should not happen
 		return nil, fmt.Errorf("handleDirectories: type assertion "+
 			"error %T", cd)
+	}
+
+	// Make sure we are not ouf of bounds.
+	for _, v := range cd.Directories {
+		if strings.HasPrefix(v, "/sys/") ||
+			strings.HasPrefix(v, "/proc/") {
+			continue
+		}
+		return protocolError(cmd.Tag, "invalid directory: %v", v)
 	}
 
 	payload := types.PCCollectDirectoriesReply{

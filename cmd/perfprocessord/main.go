@@ -322,7 +322,85 @@ func (p *PerfCtl) connect(ctx context.Context, address string) (*session, error)
 	return session, nil
 }
 
-func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) error {
+func (p *PerfCtl) handleNetCache(ctx context.Context, s *session, h HostIdentifier, run uint64) error {
+	log.Tracef("handleNetCache %v", s.address)
+	defer log.Tracef("handleNetCache exit %v", s.address)
+
+	// Figure out NICs that exist on remote systems.
+	reply, err := p.sendAndWait(ctx, s, types.PCCommand{
+		Cmd: types.PCCollectDirectoriesCmd,
+		Payload: types.PCCollectDirectories{
+			Directories: []string{"/sys/class/net/"},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	dirsReply, ok := reply.(types.PCCollectDirectoriesReply)
+	if !ok {
+		return fmt.Errorf("directories reply invalid type: %T",
+			reply)
+	}
+
+	// Remove localhost
+	nics := make([]string, 0, len(dirsReply.Values[0]))
+	for _, v := range dirsReply.Values[0] {
+		if v == "lo" {
+			continue
+		}
+		nics = append(nics, v)
+	}
+
+	// Obtain speed and duplex for all NICs.
+	nicsReply, err := p.getNetDevices(ctx, s, nics)
+	if err != nil {
+		return err
+	}
+
+	// Create cache
+	nicCache := make(map[string]parser.NIC)
+	for k := range nics {
+		nicCache[nics[k]] = nicsReply[k]
+	}
+
+	// Add empty localhost record
+	nicCache["lo"] = parser.NIC{}
+
+	// Construct JSON to fill the NIC cache.
+	ts := time.Now()
+	for k, v := range nicCache {
+		// Duplex
+		wc := journal.WrapPCCollection{
+			Site: h.Site,
+			Host: h.Host,
+			Run:  run,
+			Measurement: &types.PCCollection{
+				Timestamp: ts,
+				System: fmt.Sprintf("/sys/class/%v/duplex\n",
+					k),
+				Measurement: v.Duplex,
+			},
+		}
+		b, err := json.Marshal(wc)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%v\n", string(b))
+
+		// Reuse wc for speed
+		wc.Measurement.System = fmt.Sprintf("/sys/class/%v/speed\n", k)
+		wc.Measurement.Measurement = strconv.FormatUint(v.Speed, 10)
+		b, err = json.Marshal(wc)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%v\n", string(b))
+	}
+
+	return nil
+}
+
+func (p *PerfCtl) singleCommand(ctx context.Context, s *session, h HostIdentifier, args []string) error {
 	log.Tracef("singleCommand %v: args %v", s.address, args)
 	defer func() {
 		log.Tracef("singleCommand exit %v: args %v", s.address, args)
@@ -459,19 +537,27 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 			return err
 		}
 		dirsReply, ok := reply.(types.PCCollectDirectoriesReply)
+		spew.Dump(dirsReply)
 		if !ok {
 			return fmt.Errorf("directories reply invalid type: %T",
 				reply)
 		}
 		for k := range dirsReply.Values {
-			fmt.Printf("Directory: %v", directories[k])
+			fmt.Printf("Directory: %v\n", directories[k])
 			for i := range dirsReply.Values[k] {
-				fmt.Printf("\n\t%v", dirsReply.Values[k][i])
+				fmt.Printf("\t%v\n", dirsReply.Values[k][i])
 			}
 			if k < len(dirsReply.Values)-1 {
 				fmt.Printf("\n")
 			}
 		}
+
+	case "netcache":
+		run, err := util.ArgAsInt("run", a)
+		if err != nil {
+			run = 0
+		}
+		return p.handleNetCache(ctx, s, h, uint64(run))
 
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
@@ -492,6 +578,7 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	case "stop":
 	case "once":
 	case "dir":
+	case "netcache":
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
 	}
@@ -527,7 +614,8 @@ func (p *PerfCtl) handleArgs(args []string) error {
 		})
 
 		eg.Go(func() error {
-			err := p.singleCommand(ctx, session, args)
+			err := p.singleCommand(ctx, session, h,
+				args)
 			if err != nil {
 				log.Errorf("handleArgs singleCommand: %v", err)
 			}
@@ -675,6 +763,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 	}
 
 	// Create nicCache that holds duplex and speed.
+	// XXX this is incorrect; this overwrites nics from different hosts
 	nicCache := make(map[string]parser.NIC)
 	cacheFilled := false
 	fillCache := func(n parser.NetDev) error {

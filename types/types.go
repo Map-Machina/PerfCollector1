@@ -15,10 +15,12 @@ const (
 	PCErrorCmd = "error" // Error reply to a command
 
 	// Commands that have a reply.
-	PCCollectOnceCmd           = "collectonce"           // Collect one measurement
-	PCCollectOnceReplyCmd      = "collectoncereply"      // Reply to collect once
-	PCStatusCollectionCmd      = "statuscollection"      // Collection status
-	PCStatusCollectionReplyCmd = "statuscollectionreply" // Collection status reply
+	PCCollectOnceCmd             = "collectonce"             // Collect single measurement
+	PCCollectOnceReplyCmd        = "collectoncereply"        // Reply to collect once
+	PCCollectDirectoriesCmd      = "collectdirectories"      // Collect directory content
+	PCCollectDirectoriesReplyCmd = "collectdirectoriesreply" // Reply to collectdirectories
+	PCStatusCollectionCmd        = "statuscollection"        // Collection status
+	PCStatusCollectionReplyCmd   = "statuscollectionreply"   // Collection status reply
 
 	// Commands that do not have a reply.
 	PCStartCollectionCmd = "startcollection" // Start collecting measurements
@@ -49,6 +51,17 @@ type PCCollectOnce struct {
 // PCCollectOnceReply is the reply to PCCollectOnce.
 type PCCollectOnceReply struct {
 	Values [][]byte // Index is same as PCCmdCollectOnce.System
+}
+
+// PCCollectDirectories is a pull of directories content.
+type PCCollectDirectories struct {
+	Directories []string // Directories to grab
+}
+
+// PCCollectDirectoriesReply is the reply to PCCollectDirectories. If a Value
+// is a directory it has a trailing slash to indicate that.
+type PCCollectDirectoriesReply struct {
+	Values [][]string // Index is same as PCCmdCollectDirectories.Directories
 }
 
 // PCStartCollection instructs the collector to start gathering data with the
@@ -106,6 +119,8 @@ func init() {
 	gob.Register(PCError{})
 	gob.Register(PCCollectOnce{})
 	gob.Register(PCCollectOnceReply{})
+	gob.Register(PCCollectDirectories{})
+	gob.Register(PCCollectDirectoriesReply{})
 	gob.Register(PCStartCollection{})
 	gob.Register(PCStatusCollectionReply{})
 }

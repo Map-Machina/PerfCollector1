@@ -58,6 +58,8 @@ Flags:
         Site name, e.g. "Evil Database Site"
   --license string
         License string, e.g. "6f37-6904-1f83-92f4-595a-0efd"
+  --cache JSON
+	JSON file that will cache values. This is used to create caches such as the NIC speed.
   --input string
 	Input directory, e.g. ~/journal
   --output string
@@ -293,7 +295,6 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 
 	switch cur.Measurement.System {
 	case "/proc/stat":
-		// XXX don't convert prev again, fix
 		p, err := parser.ProcessStat([]byte(prev.Measurement.Measurement))
 		if err != nil {
 			return fmt.Errorf("ProcessStat prev: %v", err)
@@ -339,7 +340,6 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 			r.Active, r.Inactive, r.Dirty)
 
 	case "/proc/net/dev":
-		// XXX don't convert prev again, fix
 		p, err := parser.ProcessNetDev([]byte(prev.Measurement.Measurement))
 		if err != nil {
 			return fmt.Errorf("ProcessNetDev prev: %v", err)
@@ -370,7 +370,6 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 		previousCache[name] = cur
 
 	case "/proc/diskstats":
-		// XXX don't convert prev again, fix
 		p, err := parser.ProcessDiskstats([]byte(prev.Measurement.Measurement))
 		if err != nil {
 			return fmt.Errorf("ProcessDiskstats prev: %v", err)

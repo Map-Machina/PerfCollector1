@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
@@ -481,6 +482,49 @@ func (p *PerfCollector) handleOnce(cmd types.PCCommand) ([]byte, error) {
 	return types.Encode(reply)
 }
 
+func (p *PerfCollector) handleDirectories(cmd types.PCCommand) ([]byte, error) {
+	log.Tracef("handleDirectories %v", cmd.Cmd)
+	defer log.Tracef("handleDirectories %v exit", cmd.Cmd)
+
+	cd, ok := cmd.Payload.(types.PCCollectDirectories)
+	if !ok {
+		// Should not happen
+		return nil, fmt.Errorf("handleDirectories: type assertion "+
+			"error %T", cd)
+	}
+
+	payload := types.PCCollectDirectoriesReply{
+		Values: make([][]string, len(cd.Directories)),
+	}
+	for k, v := range cd.Directories {
+		log.Tracef("handleDirectories: %v", v)
+		f, err := ioutil.ReadDir(v)
+		if err != nil {
+			log.Errorf("handleDirectories ReadFile: %v", err)
+			return protocolError(cmd.Tag, "invalid directory: %v",
+				v)
+		}
+		payload.Values[k] = make([]string, 0, len(f))
+		for i := range f {
+			suffix := ""
+			if f[i].IsDir() {
+				suffix = "/"
+			}
+			payload.Values[k] = append(payload.Values[k],
+				f[i].Name()+suffix)
+		}
+	}
+
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCCollectDirectoriesReplyCmd,
+		Payload: payload,
+	}
+
+	return types.Encode(reply)
+}
+
 func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request) {
 	log.Tracef("oobHandler")
 	defer func() {
@@ -545,6 +589,9 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 			}
 		case types.PCCollectOnceCmd:
 			reply, err = p.handleOnce(cmd)
+
+		case types.PCCollectDirectoriesCmd:
+			reply, err = p.handleDirectories(cmd)
 
 		case types.PCStatusCollectionCmd:
 			reply, err = p.handleStatusCollection(ctx, cmd, channel)

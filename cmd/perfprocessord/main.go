@@ -124,7 +124,7 @@ func (p *PerfCtl) send(s *session, cmd types.PCCommand, callback chan interface{
 	// Do expensive encode first
 	blob, err := types.Encode(cmd)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	log.Tracef("send %v: %v", s.address, spew.Sdump(cmd))
@@ -230,6 +230,16 @@ func (p *PerfCtl) oobHandler(s *session) error {
 			o, ok := cmd.Payload.(types.PCCollectOnceReply)
 			if ok {
 				reply = o
+			} else {
+				// Should not happen
+				log.Errorf("type assertion error %v: %T",
+					s.address, cmd.Payload)
+			}
+
+		case types.PCCollectDirectoriesReplyCmd:
+			d, ok := cmd.Payload.(types.PCCollectDirectoriesReply)
+			if ok {
+				reply = d
 			} else {
 				// Should not happen
 				log.Errorf("type assertion error %v: %T",
@@ -401,6 +411,10 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 				"/proc/version",
 			}
 		}
+		err = util.HasTrailingSlashes(systems)
+		if err != nil {
+			return err
+		}
 		reply, err := p.sendAndWait(ctx, s, types.PCCommand{
 			Cmd: types.PCCollectOnceCmd,
 			Payload: types.PCCollectOnce{
@@ -418,6 +432,43 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, args []string) 
 			fmt.Printf("System: %v\n", systems[k])
 			fmt.Printf("%v", string(onceReply.Values[k]))
 			if k < len(onceReply.Values)-1 {
+				fmt.Printf("\n")
+			}
+		}
+
+	case "dir":
+		// XXX disallow anything outside of /proc and /sys.
+		if len(a) == 1 {
+			return fmt.Errorf("must provide directories")
+		}
+		directories, err := util.ArgAsStringSlice("directories", a)
+		if err != nil {
+			return err
+		}
+		err = util.DoesNotHaveTrailingSlashes(directories)
+		if err != nil {
+			return err
+		}
+		reply, err := p.sendAndWait(ctx, s, types.PCCommand{
+			Cmd: types.PCCollectDirectoriesCmd,
+			Payload: types.PCCollectDirectories{
+				Directories: directories,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		dirsReply, ok := reply.(types.PCCollectDirectoriesReply)
+		if !ok {
+			return fmt.Errorf("directories reply invalid type: %T",
+				reply)
+		}
+		for k := range dirsReply.Values {
+			fmt.Printf("Directory: %v", directories[k])
+			for i := range dirsReply.Values[k] {
+				fmt.Printf("\n\t%v", dirsReply.Values[k][i])
+			}
+			if k < len(dirsReply.Values)-1 {
 				fmt.Printf("\n")
 			}
 		}
@@ -440,6 +491,7 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	case "start":
 	case "stop":
 	case "once":
+	case "dir":
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
 	}

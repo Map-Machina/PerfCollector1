@@ -363,9 +363,6 @@ func (p *PerfCtl) handleNetCache(ctx context.Context, s *session, h HostIdentifi
 		nicCache[nics[k]] = nicsReply[k]
 	}
 
-	// Add empty localhost record
-	nicCache["lo"] = parser.NIC{}
-
 	// Construct JSON to fill the NIC cache.
 	ts := time.Now()
 	for k, v := range nicCache {

@@ -376,9 +376,9 @@ func (p *PerfCtl) handleNetCache(ctx context.Context, s *session, h HostIdentifi
 			Run:  run,
 			Measurement: &types.PCCollection{
 				Timestamp: ts,
-				System: fmt.Sprintf("/sys/class/%v/duplex\n",
+				System: fmt.Sprintf("/sys/class/net/%v/duplex",
 					k),
-				Measurement: v.Duplex,
+				Measurement: v.Duplex + "\n",
 			},
 		}
 		b, err := json.Marshal(wc)
@@ -388,8 +388,9 @@ func (p *PerfCtl) handleNetCache(ctx context.Context, s *session, h HostIdentifi
 		fmt.Printf("%v\n", string(b))
 
 		// Reuse wc for speed
-		wc.Measurement.System = fmt.Sprintf("/sys/class/%v/speed\n", k)
-		wc.Measurement.Measurement = strconv.FormatUint(v.Speed, 10)
+		wc.Measurement.System = fmt.Sprintf("/sys/class/net/%v/speed", k)
+		wc.Measurement.Measurement = strconv.FormatUint(v.Speed, 10) +
+			"\n"
 		b, err = json.Marshal(wc)
 		if err != nil {
 			return err

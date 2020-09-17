@@ -180,20 +180,23 @@ func ifUtil(name string, nics map[string]NIC, rxKBytes, txKBytes float64) float6
 	if !ok {
 		return 0
 	}
-	if nic.Speed == 0 {
+	if nic.Speed <= 0 {
 		return 0
 	}
 	speed := float64(nic.Speed * 1000000)
-	if nic.Duplex == "full" {
+	switch nic.Duplex {
+	case "full":
 		if rxKBytes > txKBytes {
 			return (rxKBytes * 800) / speed
 		}
 		return (txKBytes * 800) / speed
+	case "half":
+		return (rxKBytes + txKBytes) * 800 / speed
 	}
-	return (rxKBytes + txKBytes) * 800 / speed
+	return 0
 }
 
-func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, tvi uint64, nics map[string]NIC) ([]database.NetDev, error) {
+func CubeNetDev(site, host, run uint64, timestamp, start, duration int64, t1, t2 NetDev, tvi uint64, nics map[string]NIC) ([]database.NetDev, error) {
 	if len(t1) != len(t2) {
 		return nil, fmt.Errorf("invalid length %v %v",
 			len(t1), len(t2))
@@ -211,8 +214,9 @@ func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, t
 		txBytes := svalue(t1[k].TxBytes, cur.TxBytes, tvi)
 		rxKBytes := rxBytes / 1024
 		txKBytes := txBytes / 1024
+		cacheName := fmt.Sprintf("%v %v %v %v", site, host, run, k)
 		dnd = append(dnd, database.NetDev{
-			RunID:     runID,
+			RunID:     run,
 			Timestamp: timestamp,
 			Start:     start,
 			Duration:  duration,
@@ -226,7 +230,7 @@ func CubeNetDev(runID uint64, timestamp, start, duration int64, t1, t2 NetDev, t
 			TxCompressed: svalue(t1[k].TxCompressed, cur.TxCompressed, tvi),
 			RxMulticast:  svalue(t1[k].RxMulticast, cur.RxMulticast, tvi),
 			// XXX not sure why * 10 since this code is a duplcate of sar
-			IfUtil: ifUtil(k, nics, rxKBytes, txKBytes) * 10,
+			IfUtil: ifUtil(cacheName, nics, rxKBytes, txKBytes) * 10,
 		})
 	}
 

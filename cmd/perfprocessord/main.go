@@ -899,7 +899,7 @@ func (p *PerfCtl) sinkLoop(ctx context.Context, site, host uint64, address strin
 				continue
 			}
 			tvi := uint64(m.Frequency.Seconds()) * parser.UserHZ
-			nd, err := parser.CubeNetDev(runID, m.Timestamp.Unix(),
+			nd, err := parser.CubeNetDev(site, host, runID, m.Timestamp.Unix(),
 				m.Start.Unix(), int64(m.Duration),
 				previousNet, n, tvi, nicCache)
 			if err != nil {

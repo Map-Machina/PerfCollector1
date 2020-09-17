@@ -461,60 +461,6 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	// Hosts.
-	dedupID := make(map[string]struct{}, len(cfg.Hosts))
-	for _, v := range cfg.Hosts {
-		// Split identifier/ipaddress.
-		a := strings.SplitN(v, "/", 2)
-		if len(a) != 2 {
-			return nil, nil, fmt.Errorf("Invalid Hosts: %v", v)
-		}
-		ipAddress := a[1]
-
-		// Split site:host.
-		h := strings.SplitN(a[0], ":", 2)
-		if len(h) != 2 {
-			return nil, nil, fmt.Errorf("Invalid identifier: %v",
-				a[0])
-		}
-
-		// Site ID.
-		siteId, err := strconv.ParseUint(h[0], 10, 64)
-		if err != nil {
-			return nil, nil, fmt.Errorf("Invalid site %v: %v",
-				h[0], err)
-		}
-
-		// Host ID.
-		hostId, err := strconv.ParseUint(h[1], 10, 64)
-		if err != nil {
-			return nil, nil, fmt.Errorf("Invalid host %v: %v",
-				h[1], err)
-		}
-
-		// Make sure there is no duplicate IP.
-		if _, ok := cfg.HostsId[ipAddress]; ok {
-			return nil, nil, fmt.Errorf("duplicate ip address: %v",
-				ipAddress)
-		}
-
-		// Make sure there is no duplicate identifier.
-		if _, ok := dedupID[a[0]]; ok {
-			return nil, nil, fmt.Errorf("duplicate host identifier: %v",
-				a[0])
-		}
-
-		// Insert into dedup map.
-		dedupID[a[0]] = struct{}{}
-
-		// Insert into lookup map.
-		cfg.HostsId[a[1]] = HostIdentifier{
-			Site: siteId,
-			Host: hostId,
-			IP:   a[1],
-		}
-	}
-
 	// We only need db commands if we are in sink mode.
 	// XXX this can go away
 	if cfg.DBURI == "" && len(remainingArgs) != 0 &&
@@ -558,9 +504,14 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, fmt.Errorf("Must provide: siteid, sitename " +
 			"and license")
 	}
+	expectedSiteID, err := strconv.ParseUint(cfg.SiteID, 10, 64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid siteid: %v", err)
+	}
 	l, err := license.NewFromStrings(cfg.SiteID, cfg.SiteName)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("could not create license key: %v",
+			err)
 	}
 	bb, err := license.LicenseFromHuman(cfg.License)
 	if err != nil {
@@ -596,7 +547,7 @@ func loadConfig() (*config, []string, error) {
 	mac.Write([]byte(cfg.SiteName))
 	cfg.aead, err = cp.NewX(mac.Sum(nil))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("could not setup aead: %v", err)
 	}
 
 	// Verify we have a valid ssh key file.
@@ -604,16 +555,76 @@ func loadConfig() (*config, []string, error) {
 	if err != nil {
 		err = util.NewSSHKeyPair(cfg.SSHKeyFile)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("invalid ssh key pair: %v",
+				err)
 		}
 
 		// Read signer.
 		signer, err = util.SSHKey(cfg.SSHKeyFile)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("ssh signer: %v", err)
 		}
 	}
 	cfg.fingerprint = ssh.FingerprintSHA256(signer.PublicKey())
+
+	// Hosts.
+
+	dedupID := make(map[string]struct{}, len(cfg.Hosts))
+	for _, v := range cfg.Hosts {
+		// Split identifier/ipaddress.
+		a := strings.SplitN(v, "/", 2)
+		if len(a) != 2 {
+			return nil, nil, fmt.Errorf("invalid Hosts: %v", v)
+		}
+		ipAddress := a[1]
+
+		// Split site:host.
+		h := strings.SplitN(a[0], ":", 2)
+		if len(h) != 2 {
+			return nil, nil, fmt.Errorf("invalid identifier: %v",
+				a[0])
+		}
+
+		// Site ID.
+		siteID, err := strconv.ParseUint(h[0], 10, 64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid site %v: %v",
+				h[0], err)
+		}
+
+		// Host ID.
+		hostId, err := strconv.ParseUint(h[1], 10, 64)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid host %v: %v",
+				h[1], err)
+		}
+
+		// Make sure there is no duplicate IP.
+		if _, ok := cfg.HostsId[ipAddress]; ok {
+			return nil, nil, fmt.Errorf("duplicate ip address: %v",
+				ipAddress)
+		}
+
+		// Make sure there is no duplicate identifier.
+		if _, ok := dedupID[a[0]]; ok {
+			return nil, nil, fmt.Errorf("duplicate host identifier: %v",
+				a[0])
+		}
+
+		// Insert into dedup map.
+		dedupID[a[0]] = struct{}{}
+
+		// Insert into lookup map.
+		if siteID != expectedSiteID {
+			return nil, nil, fmt.Errorf("invalid siteid in hosts: "+
+				"%v wanted %v", siteID, expectedSiteID)
+		}
+		cfg.HostsId[a[1]] = HostIdentifier{
+			Site: siteID,
+			Host: hostId,
+			IP:   a[1],
+		}
+	}
 
 	// Warn about missing config file only after all other configuration is
 	// done.  This prevents the warning on help messages and invalid

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ type config struct {
 	Verbose     bool
 	SiteID      uint
 	Mode        string
+	Cache       string
 	SiteName    string
 	License     string
 	InputFile   string
@@ -52,6 +54,8 @@ Flags:
   -V	Show version and exit
   --mode string
 	Output mode: csv, json (default csv)
+  --cache string
+	filename of JSON file that caching data.
   --siteid unsigned integer
 	Numerical site id, e.g. 1
   --sitename string
@@ -78,6 +82,7 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.BoolVar(&c.Verbose, "v", false, "")
 	fs.UintVar(&c.SiteID, "siteid", 0, "")
 	fs.StringVar(&c.Mode, "mode", "csv", "")
+	fs.StringVar(&c.Cache, "cache", "", "")
 	fs.StringVar(&c.SiteName, "sitename", "", "")
 	fs.StringVar(&c.License, "license", "", "")
 	fs.StringVar(&c.InputFile, "input", "", "")
@@ -192,6 +197,8 @@ func loadConfig() (*config, []string, error) {
 	}
 	cfg.Output = cleanAndExpandPath(cfg.Output)
 
+	cfg.Cache = cleanAndExpandPath(cfg.Cache)
+
 	return cfg, fs.Args(), nil
 }
 
@@ -226,7 +233,83 @@ func constructHeader(wc *journal.WrapPCCollection) (string, error) {
 	return "#site,host,timestamp," + mHdr, nil
 }
 
-func csv(cfg *config, cur *journal.WrapPCCollection) error {
+var (
+	reDuplex = regexp.MustCompile("/sys/class/net/[[:alnum:]]*/duplex")
+	reSpeed  = regexp.MustCompile("/sys/class/net/[[:alnum:]]*/speed")
+	reNIC    = regexp.MustCompile("(/[[:alnum:]]+){4}")
+)
+
+func createNetCache(cache map[string]string) (map[string]parser.NIC, error) {
+	// Incoming data example:
+	// 0 0 0 /sys/class/net/lo/speed
+	// 0 1 0 /sys/class/net/eno1/duplex
+	// Translate cache to NIC cache
+	r := make(map[string]parser.NIC)
+	for k, v := range cache {
+		if !(reDuplex.MatchString(k) || reSpeed.MatchString(k)) {
+			// Skip non NIC items we don't understand.
+			continue
+		}
+
+		var (
+			site, host, run uint64
+			system          string
+		)
+		n, err := fmt.Sscanf(k, "%d %d %d %s", &site, &host, &run, &system)
+		if err != nil || n != 4 {
+			fmt.Printf("invalid cache entry: %v", k)
+			continue
+		}
+		//fmt.Printf("%v %v %v %v -- %v %v\n", site, host, run, system, n, err)
+
+		// \/sys\/class\/net\/[[:print:]]*\/duplex
+		// ([[:alnum:]]*){4}
+
+		// Returns 2 matches, we want index 1 which is prefixed with a /
+		s := reNIC.FindStringSubmatch(k)
+		if len(s) != 2 {
+			continue
+		}
+		nic := strings.Trim(s[1], "/")
+		if nic == "" {
+			continue
+		}
+
+		// Skip localhost
+		if nic == "lo" {
+			continue
+		}
+
+		key := fmt.Sprintf("%v %v %v %v", site, host, run, nic)
+		cc, ok := r[key]
+		if !ok {
+			cc = parser.NIC{}
+		}
+
+		switch filepath.Base(k) {
+		case "duplex":
+			cc.Duplex = strings.TrimSpace(v)
+		case "speed":
+			var err error
+			cc.Speed, err = strconv.ParseUint(strings.TrimSpace(v),
+				10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid speed %v:%v %v: %v",
+					site, host, nic, err)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported netcache item: %v",
+				filepath.Base(k))
+		}
+
+		// Overwrite old value
+		r[key] = cc
+	}
+
+	return r, nil
+}
+
+func csv(cfg *config, cur *journal.WrapPCCollection, cache map[string]parser.NIC) error {
 	if cur.Site != uint64(cfg.SiteID) {
 		// File should not have decrypted
 		return fmt.Errorf("unexpected site: %v", cur.Site)
@@ -351,8 +434,13 @@ func csv(cfg *config, cur *journal.WrapPCCollection) error {
 		// Ignore database bits
 		tvi := uint64(cur.Measurement.Frequency.Seconds()) *
 			parser.UserHZ
+
 		// XXX there is no nic cache here, fix
-		r, err := parser.CubeNetDev(0, 0, 0, 0, p, c, tvi, nil)
+		r, err := parser.CubeNetDev(cur.Site, cur.Host, cur.Run,
+			0, /* timestamp */
+			0, /* start */
+			0, /* duration */
+			p, c, tvi, cache)
 		if err != nil {
 			return fmt.Errorf("CubeNetDev: %v", err)
 		}
@@ -415,6 +503,35 @@ func doJSON(cfg *config, cur *journal.WrapPCCollection) error {
 	return err
 }
 
+func readCache(filename string) (map[string]string, error) {
+	fc, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("cache: %v", err)
+	}
+	defer fc.Close()
+
+	cache := make(map[string]string, 16)
+	d := json.NewDecoder(fc)
+	entry := 0
+	for {
+		var wc journal.WrapPCCollection
+		err := d.Decode(&wc)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("decode cache: %v %v",
+				entry, err)
+		}
+		k := fmt.Sprintf("%v %v %v %v", wc.Site, wc.Host, wc.Run,
+			wc.Measurement.System)
+		cache[k] = wc.Measurement.Measurement
+		entry++
+	}
+
+	return cache, nil
+}
+
 func _main() error {
 	cfg, _, err := loadConfig()
 	if err != nil {
@@ -422,18 +539,13 @@ func _main() error {
 	}
 
 	// Generate journal key from license material. There is no function for
-	// this in order to obfudcate this terrible trick.
+	// this in order to obfuscate this terrible trick.
 	mac := hmac.New(sha256.New, []byte(cfg.License))
 	mac.Write([]byte(strconv.FormatUint(uint64(cfg.SiteID), 10)))
 	mac.Write([]byte(cfg.SiteName))
 	aead, err := cp.NewX(mac.Sum(nil))
 	if err != nil {
 		return err
-	}
-
-	f, err := os.Open(cfg.InputFile)
-	if err != nil {
-		return fmt.Errorf("input file %v", err)
 	}
 
 	type modeT int
@@ -458,6 +570,22 @@ func _main() error {
 			return fmt.Errorf("output dir does not exist: %v",
 				cfg.Output)
 		}
+	}
+
+	// Read cache, XXX this is meanigless in JSON mode
+	cache, err := readCache(cfg.Cache)
+	if err != nil {
+		return err
+	}
+	netCache, err := createNetCache(cache)
+	if err != nil {
+		return err
+	}
+
+	// Open input file
+	f, err := os.Open(cfg.InputFile)
+	if err != nil {
+		return fmt.Errorf("input: %v", err)
 	}
 
 	// Pre-process
@@ -488,7 +616,11 @@ func _main() error {
 
 		switch mode {
 		case modeCSV:
-			err = csv(cfg, wc)
+			if err != nil {
+				return fmt.Errorf("createCache: %v", err)
+			}
+
+			err = csv(cfg, wc, netCache)
 			if err != nil {
 				return err
 			}

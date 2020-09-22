@@ -197,7 +197,9 @@ func loadConfig() (*config, []string, error) {
 	}
 	cfg.Output = cleanAndExpandPath(cfg.Output)
 
-	cfg.Cache = cleanAndExpandPath(cfg.Cache)
+	if cfg.Cache != "" {
+		cfg.Cache = cleanAndExpandPath(cfg.Cache)
+	}
 
 	return cfg, fs.Args(), nil
 }
@@ -573,13 +575,16 @@ func _main() error {
 	}
 
 	// Read cache, XXX this is meanigless in JSON mode
-	cache, err := readCache(cfg.Cache)
-	if err != nil {
-		return err
-	}
-	netCache, err := createNetCache(cache)
-	if err != nil {
-		return err
+	var netCache map[string]parser.NIC
+	if cfg.Cache != "" {
+		cache, err := readCache(cfg.Cache)
+		if err != nil {
+			return err
+		}
+		netCache, err = createNetCache(cache)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Open input file

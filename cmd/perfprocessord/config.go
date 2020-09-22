@@ -586,6 +586,8 @@ func loadConfig() (*config, []string, error) {
 		}
 
 		// Site ID.
+		// XXX drop Site in host identifier; this is determined by the
+		// license.
 		siteID, err := strconv.ParseUint(h[0], 10, 64)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid site %v: %v",

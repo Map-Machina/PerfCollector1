@@ -146,8 +146,7 @@ func isPrime(n *big.Int) bool {
 		return false
 	}
 
-	sn := new(big.Int).Set(n)
-	sn.Sqrt(n)
+	sn := new(big.Int).Sqrt(n)
 	i := new(big.Int).Set(two)
 	z := new(big.Int)
 	for {

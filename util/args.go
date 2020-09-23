@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/inhies/go-bytesize"
 )
 
 // HasTrailingSlashes returns an error if any system has a trailing slash.
@@ -105,6 +107,13 @@ func ArgAsStringSlice(arg string, args map[string]string) ([]string, error) {
 func ArgAsDuration(arg string, args map[string]string) (time.Duration, error) {
 	if a, ok := args[arg]; ok {
 		return time.ParseDuration(a)
+	}
+	return 0, fmt.Errorf("argument not found: %v", arg)
+}
+
+func ArgAsSize(arg string, args map[string]string) (bytesize.ByteSize, error) {
+	if a, ok := args[arg]; ok {
+		return bytesize.Parse(a)
 	}
 	return 0, fmt.Errorf("argument not found: %v", arg)
 }

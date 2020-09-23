@@ -14,6 +14,7 @@ import (
 	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/decred/dcrd/dcrutil"
+	"github.com/inhies/go-bytesize"
 	"github.com/jrick/flagfile"
 )
 
@@ -46,6 +47,9 @@ Actions:
 	Measure duration to excute the number of units. Type: rmw, findprimes.
 	Workers defaults to number of logical CPUs and timeout to 1 minute.
 	Example: perfload load units=100000 type=findprimes workers=8 timeout=30s
+  disk units=<number> mode=<string> size=<bytesize> timeout=<duration>
+	Measure duration to read/write the number of units. Mode: read, write.
+	Example: perfload disk units=512 mode=write filename=xxx size=1MB timeout=1m
 `)
 	os.Exit(2)
 }
@@ -173,6 +177,7 @@ func cpuLoad(ctx context.Context, a map[string]string) error {
 		fmt.Printf("workers defaulting to: %v\n", workers)
 	}
 
+	// Timeout
 	timeout, err := util.ArgAsDuration("timeout", a)
 	if err != nil {
 		timeout = 60 * time.Second
@@ -186,6 +191,74 @@ func cpuLoad(ctx context.Context, a map[string]string) error {
 			actual, units, err)
 	}
 	fmt.Printf("units executed %v in %v\n", actual, d)
+
+	return nil
+}
+
+func disk(ctx context.Context, a map[string]string) error {
+	// Work units to perform
+	units, err := util.ArgAsUint("units", a)
+	if err != nil {
+		return err
+	}
+
+	// Mode read or write.
+	mode, err := util.ArgAsString("mode", a)
+	if err != nil {
+		return err
+	}
+	var read bool
+	switch mode {
+	case "read":
+		read = true
+	case "write":
+	default:
+		return fmt.Errorf("unknown mode: %v", mode)
+	}
+
+	// Size
+	size, err := util.ArgAsSize("size", a)
+	if err != nil {
+		size = 1024 * 1024
+		fmt.Printf("size defaulting to: %v\n",
+			bytesize.New(float64(size)))
+	}
+
+	// Timeout
+	timeout, err := util.ArgAsDuration("timeout", a)
+	if err != nil {
+		timeout = 60 * time.Second
+		fmt.Printf("timeout defaulting to: %v\n", timeout)
+	}
+
+	// File name.
+	filename, err := util.ArgAsString("filename", a)
+	if err != nil {
+		return err
+	}
+
+	if read {
+		// Read
+		d, actual, err := load.DiskRead(ctx, timeout, filename,
+			uint64(units), uint64(size))
+		if err != nil {
+			return fmt.Errorf("error, units completed %v/%v: %v",
+				actual, units, err)
+		}
+		fmt.Printf("Read units %v bytes %v in %v\n", actual,
+			bytesize.New(float64(uint(actual)*uint(size))), d)
+		return nil
+	}
+
+	// Write
+	d, actual, err := load.DiskWrite(ctx, timeout, filename, uint64(units),
+		uint64(size))
+	if err != nil {
+		return fmt.Errorf("error, units completed %v/%v: %v",
+			actual, units, err)
+	}
+	fmt.Printf("Written units %v bytes %v in %v\n", actual,
+		bytesize.New(float64(uint(actual)*uint(size))), d)
 
 	return nil
 }
@@ -208,6 +281,9 @@ func _main() error {
 	switch args[0] {
 	case "load":
 		return cpuLoad(ctx, a)
+
+	case "disk":
+		return disk(ctx, a)
 
 	default:
 		return fmt.Errorf("unknown action: %v", args[0])

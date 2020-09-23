@@ -5,9 +5,13 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+
+	"github.com/businessperformancetuning/perfcollector/util"
 )
 
 func userIdle(duration time.Duration) {
@@ -250,4 +254,92 @@ done:
 	wg.Wait()
 
 	return time.Now().Sub(start), found, returnError
+}
+
+func DiskWrite(parent context.Context, maxDuration time.Duration, filename string, units, size uint64) (time.Duration, uint64, error) {
+	ctx, _ := context.WithTimeout(parent, maxDuration)
+
+	block, err := util.Random(int(size))
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Work
+	start := time.Now()
+	f, err := os.OpenFile(filename,
+		os.O_CREATE|os.O_TRUNC|os.O_SYNC|os.O_WRONLY|syscall.O_DIRECT,
+		0644)
+	if err != nil {
+		return 0, 0, err
+	}
+	// Close file if not closed already.
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+	for i := uint64(0); i < units; i++ {
+		_, err = f.Write(block)
+		if err != nil {
+			return time.Now().Sub(start), uint64(i), err
+		}
+		select {
+		case <-ctx.Done():
+			return time.Now().Sub(start), uint64(i), ctx.Err()
+		default:
+		}
+	}
+	err = f.Sync()
+	if err != nil {
+		return time.Now().Sub(start), units, err
+	}
+	err = f.Close()
+	if err != nil {
+		return time.Now().Sub(start), units, err
+	}
+	f = nil
+
+	return time.Now().Sub(start), units, err
+}
+
+func DiskRead(parent context.Context, maxDuration time.Duration, filename string, units, size uint64) (time.Duration, uint64, error) {
+	ctx, _ := context.WithTimeout(parent, maxDuration)
+
+	block := make([]byte, size)
+
+	// Work
+	start := time.Now()
+	f, err := os.OpenFile(filename,
+		os.O_SYNC|os.O_RDONLY|syscall.O_DIRECT, 0644)
+	if err != nil {
+		return 0, 0, err
+	}
+	// Close file if not closed already.
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+	for i := uint64(0); i < units; i++ {
+		_, err = f.Read(block)
+		if err != nil {
+			return time.Now().Sub(start), uint64(i), err
+		}
+		select {
+		case <-ctx.Done():
+			return time.Now().Sub(start), uint64(i), ctx.Err()
+		default:
+		}
+	}
+	err = f.Sync()
+	if err != nil {
+		return time.Now().Sub(start), units, err
+	}
+	err = f.Close()
+	if err != nil {
+		return time.Now().Sub(start), units, err
+	}
+	f = nil
+
+	return time.Now().Sub(start), units, err
 }

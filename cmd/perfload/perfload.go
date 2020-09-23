@@ -4,10 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/util"
@@ -140,19 +142,48 @@ func loadConfig() (*config, []string, error) {
 	return cfg, fs.Args(), nil
 }
 
-func findPrimes(ctx context.Context, a map[string]string) error {
-	p, err := util.ArgAsUint("findprimes", a)
+func cpuLoad(ctx context.Context, a map[string]string) error {
+	// Work units to perform
+	units, err := util.ArgAsUint("units", a)
 	if err != nil {
 		return err
 	}
 
-	workers := uint64(runtime.NumCPU())
-	fmt.Printf("workers: %v\n", workers)
-	d, actual, err := load.FindPrimesParallel(uint64(p), workers)
+	// Load type
+	loadType, err := util.ArgAsString("type", a)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("primes found %v in %v\n", actual, d)
+	var loadFunc func(*big.Int) bool
+	switch loadType {
+	case "rmw":
+		loadFunc = load.RMW
+	case "findprimes":
+		loadFunc = load.Prime
+	default:
+		return fmt.Errorf("unknown type: %v", loadType)
+	}
+
+	// Number of workers
+	workers, err := util.ArgAsUint("workers", a)
+	if err != nil {
+		workers = uint(runtime.NumCPU())
+		fmt.Printf("workers defaulting to: %v\n", workers)
+	}
+
+	timeout, err := util.ArgAsDuration("timeout", a)
+	if err != nil {
+		timeout = 60 * time.Second
+		fmt.Printf("timeout defaulting to: %v\n", timeout)
+	}
+
+	d, actual, err := load.ExecuteParallel(ctx, timeout,
+		uint64(units), uint64(workers), loadFunc)
+	if err != nil {
+		return fmt.Errorf("timeout, units completed %v/%v: %v",
+			actual, units, err)
+	}
+	fmt.Printf("units executed %v in %v\n", actual, d)
 
 	return nil
 }
@@ -174,7 +205,7 @@ func _main() error {
 
 	switch args[0] {
 	case "load":
-		return findPrimes(ctx, a)
+		return cpuLoad(ctx, a)
 
 	default:
 		return fmt.Errorf("unknwon action: %v", args[0])

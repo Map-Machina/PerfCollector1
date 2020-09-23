@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -184,20 +183,28 @@ func FindPrimes(n uint) time.Duration {
 	return time.Now().Sub(start)
 }
 
-func getCPUCores() (uint64, error) {
-	// XXX get value from: cat /proc/cpuinfo | grep "cpu cores"
-	return uint64(runtime.NumCPU()), nil
+// RMW Read-Modify-Write test. Always returns false for the continue condition.
+func RMW(p *big.Int) bool {
+	UserWork(1)
+	return false
 }
 
-func FindPrimesParallel(n, cores uint64) (time.Duration, uint64, error) {
+// Prime test returns true for the continue condition if the provided number is
+// not a prime.
+func Prime(p *big.Int) bool {
+	return !isPrime(p)
+}
+
+// ExecuteParallel excutes n functions f with the supplied workers threads.
+func ExecuteParallel(parent context.Context, maxDuration time.Duration, n, workers uint64, f func(*big.Int) bool) (time.Duration, uint64, error) {
 	// Launch workers
 	var (
 		wg    sync.WaitGroup
 		found uint64 // atomic
 	)
-	ctx, cancel := context.WithCancel(context.Background())
-	pipe := make(chan *big.Int, int(cores))
-	for x := uint64(0); x < cores; x++ {
+	ctx, cancel := context.WithTimeout(parent, maxDuration)
+	pipe := make(chan *big.Int, int(workers))
+	for x := uint64(0); x < workers; x++ {
 		wg.Add(1)
 		go func(me uint64) {
 			defer wg.Done()
@@ -205,35 +212,23 @@ func FindPrimesParallel(n, cores uint64) (time.Duration, uint64, error) {
 				select {
 				case <-ctx.Done():
 					return
-				case p, ok := <-pipe:
-					if !ok {
-						return
+				case p := <-pipe:
+					if f(p) {
+						continue
 					}
-					_ = p
-					UserWork(1)
+
 					newFound := atomic.AddUint64(&found, 1)
 					if newFound >= n {
 						cancel()
 						return
 					}
-					continue
-
-					//if !isPrime(p) {
-					//	continue
-					//}
-					//// We have a prime, add to total and exit all
-					//// go routines if done.
-					//newFound := atomic.AddUint64(&found, 1)
-					//if newFound >= n {
-					//	cancel()
-					//	return
-					//}
 				}
 			}
 		}(x)
 	}
 
 	// Work
+	var returnError error
 	start := time.Now()
 	i := new(big.Int).Set(zero)
 	for {
@@ -243,12 +238,16 @@ func FindPrimesParallel(n, cores uint64) (time.Duration, uint64, error) {
 
 		select {
 		case <-ctx.Done():
-			break
+			if context.Canceled != ctx.Err() {
+				returnError = ctx.Err()
+			}
+			goto done
 		case pipe <- new(big.Int).Set(i):
 		}
 		i.Add(i, one)
 	}
+done:
 	wg.Wait()
 
-	return time.Now().Sub(start), found, nil
+	return time.Now().Sub(start), found, returnError
 }

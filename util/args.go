@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HasTrailingSlashes returns an error if any system has a trailing slash.
@@ -99,4 +100,11 @@ func ArgAsStringSlice(arg string, args map[string]string) ([]string, error) {
 		return val, nil
 	}
 	return nil, fmt.Errorf("argument not found: %v", arg)
+}
+
+func ArgAsDuration(arg string, args map[string]string) (time.Duration, error) {
+	if a, ok := args[arg]; ok {
+		return time.ParseDuration(a)
+	}
+	return 0, fmt.Errorf("argument not found: %v", arg)
 }

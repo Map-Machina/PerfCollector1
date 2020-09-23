@@ -42,8 +42,10 @@ Flags:
   -v    verbose
   -V	Show version and exit
 Actions:
-  load findprimes=<number>
-	Measure duration to find the provided number of primes
+  load units=<number> type=<string> workers=<number> timeout=<duration>
+	Measure duration to excute the number of units. Type: rmw, findprimes.
+	Workers defaults to number of logical CPUs and timeout to 1 minute.
+	Example: perfload load units=100000 type=findprimes workers=8 timeout=30s
 `)
 	os.Exit(2)
 }
@@ -208,7 +210,7 @@ func _main() error {
 		return cpuLoad(ctx, a)
 
 	default:
-		return fmt.Errorf("unknwon action: %v", args[0])
+		return fmt.Errorf("unknown action: %v", args[0])
 	}
 
 	return nil

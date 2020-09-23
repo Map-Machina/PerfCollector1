@@ -1,9 +1,13 @@
 package load
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -161,4 +165,90 @@ func isPrime(n *big.Int) bool {
 	}
 
 	return true
+}
+
+// Add context?
+func FindPrimes(n uint) time.Duration {
+	start := time.Now()
+	found := uint(0)
+	i := new(big.Int).Set(zero)
+	for {
+		if found >= n {
+			break
+		}
+		if isPrime(i) {
+			found++
+		}
+		i.Add(i, one)
+	}
+	return time.Now().Sub(start)
+}
+
+func getCPUCores() (uint64, error) {
+	// XXX get value from: cat /proc/cpuinfo | grep "cpu cores"
+	return uint64(runtime.NumCPU()), nil
+}
+
+func FindPrimesParallel(n, cores uint64) (time.Duration, uint64, error) {
+	// Launch workers
+	var (
+		wg    sync.WaitGroup
+		found uint64 // atomic
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	pipe := make(chan *big.Int, int(cores))
+	for x := uint64(0); x < cores; x++ {
+		wg.Add(1)
+		go func(me uint64) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case p, ok := <-pipe:
+					if !ok {
+						return
+					}
+					_ = p
+					UserWork(1)
+					newFound := atomic.AddUint64(&found, 1)
+					if newFound >= n {
+						cancel()
+						return
+					}
+					continue
+
+					//if !isPrime(p) {
+					//	continue
+					//}
+					//// We have a prime, add to total and exit all
+					//// go routines if done.
+					//newFound := atomic.AddUint64(&found, 1)
+					//if newFound >= n {
+					//	cancel()
+					//	return
+					//}
+				}
+			}
+		}(x)
+	}
+
+	// Work
+	start := time.Now()
+	i := new(big.Int).Set(zero)
+	for {
+		if atomic.LoadUint64(&found) >= n {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			break
+		case pipe <- new(big.Int).Set(i):
+		}
+		i.Add(i, one)
+	}
+	wg.Wait()
+
+	return time.Now().Sub(start), found, nil
 }

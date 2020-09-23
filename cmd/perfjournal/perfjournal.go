@@ -45,8 +45,8 @@ type config struct {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `Usage of perflicense:
-  perflicense [flags] action <args...>
+	fmt.Fprintf(os.Stderr, `Usage of perfjournal:
+  perfjournal [flags] action <args...>
 Flags:
   -C value
         config file
@@ -74,7 +74,7 @@ Flags:
 }
 
 func (c *config) FlagSet() *flag.FlagSet {
-	fs := flag.NewFlagSet("perflicense", flag.ExitOnError)
+	fs := flag.NewFlagSet("perfjournal", flag.ExitOnError)
 	configParser := flagfile.Parser{AllowUnknown: false}
 	c.Config = configParser.ConfigFlag(fs)
 	fs.Var(c.Config, "C", "config file")

@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -50,6 +53,12 @@ Actions:
   disk units=<number> mode=<string> size=<bytesize> timeout=<duration>
 	Measure duration to read/write the number of units. Mode: read, write.
 	Example: perfload disk units=512 mode=write filename=xxx size=1MB timeout=1m
+  net server - mode=server listen=<string>
+	Measure duration to read/write the number of units.
+	Example: perfload net mode=server listen=":2223"
+  net client - mode=client command=<string> connect=<string> units=<number> size=<bytesize>
+	Measure duration to read/write the number of units.
+	Example: perfload net mode=client units=1024 size=1MB command=write connect=127.0.0.1:2223
 `)
 	os.Exit(2)
 }
@@ -263,6 +272,151 @@ func disk(ctx context.Context, a map[string]string) error {
 	return nil
 }
 
+func network(ctx context.Context, a map[string]string) error {
+	// Mode server or client
+	mode, err := util.ArgAsString("mode", a)
+	if err != nil {
+		return err
+	}
+	var server bool
+	switch mode {
+	case "server":
+		server = true
+	case "client":
+	default:
+		return fmt.Errorf("unknown mode: %v", mode)
+	}
+
+	// Timeout
+	timeout, err := util.ArgAsDuration("timeout", a)
+	if err != nil {
+		timeout = 60 * time.Second
+		fmt.Printf("timeout defaulting to: %v\n", timeout)
+	}
+	// XXX add timeout
+
+	if server {
+		listen, err := util.ArgAsString("listen", a)
+		if err != nil {
+			listen = ":2223"
+			fmt.Printf("listen defaulting to: %v\n", listen)
+		}
+
+		d, b, err := load.NetServer(ctx, timeout, listen)
+		if err != nil {
+			return fmt.Errorf("server error duration %v bytes %v: %v",
+				d, b, err)
+		}
+
+		return nil
+	}
+
+	// Client
+
+	// Command
+	command, err := util.ArgAsString("command", a)
+	if err != nil {
+		return err
+	}
+
+	// Connect
+	connect, err := util.ArgAsString("connect", a)
+	if err != nil {
+		return err
+	}
+
+	// Work units to perform
+	units, err := util.ArgAsUint("units", a)
+	if err != nil {
+		return err
+	}
+
+	// Size
+	size, err := util.ArgAsSize("size", a)
+	if err != nil {
+		size = 1024 * 1024
+		fmt.Printf("size defaulting to: %v\n",
+			bytesize.New(float64(size)))
+	}
+
+	conn, err := net.Dial("tcp", connect)
+	if err != nil {
+		return err
+	}
+
+	// Write command. The command is written in JSON with a terminating \n.
+	// This is needed becasue readers are greedy and the other end may have
+	// leftovers causing a short read.
+	//
+	// By writing a JSON \n terminated blob the reader can read up to \n
+	// without affecting the underlying raw connection.
+	jsonBlob, err := json.Marshal(load.NetCommand{
+		Version: 1,
+		Command: command,
+		Units:   uint64(units),
+		Size:    uint64(size),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(conn, "%s\n", jsonBlob)
+
+	var (
+		verb string
+	)
+	start := time.Now()
+	switch command {
+	case "write":
+		verb = "written"
+		var x uint64
+		block := make([]byte, size)
+		for {
+			n, err := conn.Write(block)
+			if err != nil {
+				return err
+			}
+			x += uint64(n)
+			if x >= uint64(units)*uint64(size) {
+				fmt.Printf("x %v\n", x)
+				break
+			}
+		}
+	case "read":
+		verb = "read"
+		block := make([]byte, size)
+		var x uint64
+		start = time.Now()
+		for {
+			n, err := conn.Read(block)
+			if err != nil {
+				return err
+			}
+			x += uint64(n)
+			if x >= uint64(units)*uint64(size) {
+				break
+			}
+		}
+
+	default:
+	}
+
+	fmt.Printf("%v bytes %v in %v\n", verb,
+		bytesize.New(float64(units*uint(size))),
+		time.Now().Sub(start))
+
+	// Wait for EOF
+	b := []byte{0xff}
+	_, err = conn.Read(b)
+	if err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
 func _main() error {
 	cfg, args, err := loadConfig()
 	if err != nil {
@@ -284,6 +438,9 @@ func _main() error {
 
 	case "disk":
 		return disk(ctx, a)
+
+	case "net":
+		return network(ctx, a)
 
 	default:
 		return fmt.Errorf("unknown action: %v", args[0])

@@ -1,10 +1,13 @@
 package load
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -12,6 +15,8 @@ import (
 	"time"
 
 	"github.com/businessperformancetuning/perfcollector/util"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/inhies/go-bytesize"
 )
 
 func userIdle(duration time.Duration) {
@@ -342,4 +347,125 @@ func DiskRead(parent context.Context, maxDuration time.Duration, filename string
 	f = nil
 
 	return time.Now().Sub(start), units, err
+}
+
+// NetCommand instructs the server what to do. The server listens and executes
+// the workload the client requests.
+type NetCommand struct {
+	Version uint
+	Command string
+	Units   uint64
+	Size    uint64
+}
+
+func NetServer(parent context.Context, maxDuration time.Duration, listen string) (time.Duration, uint64, error) {
+	ctx, _ := context.WithTimeout(parent, maxDuration)
+
+	lc := net.ListenConfig{}
+	ln, err := lc.Listen(ctx, "tcp", listen)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	tl := ln.(*net.TCPListener)
+	for {
+		// See if context has expired
+		select {
+		case <-ctx.Done():
+			return 0, 0, ctx.Err()
+		default:
+		}
+
+		// Set deadline to 1 second and restart
+		tl.SetDeadline(time.Now().Add(time.Second))
+		conn, err := tl.Accept()
+		if err != nil {
+			if e, ok := err.(*net.OpError); ok {
+				if e.Timeout() {
+					continue
+				}
+				spew.Dump(e)
+			}
+			return 0, 0, err
+		}
+		fmt.Printf("Client connected: %v\n", conn.RemoteAddr())
+
+		// We only allow one connection at a time
+
+		// Wait for client command
+		r := bufio.NewReader(conn)
+		jsonBlob, err := r.ReadString('\n')
+		if err != nil {
+			return 0, 0, err
+		}
+
+		var nc NetCommand
+		err = json.Unmarshal([]byte(jsonBlob), &nc)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		var (
+			verb  string
+			start time.Time
+		)
+		switch nc.Command {
+		case "write":
+			// Client write is server read
+			verb = "read"
+			block := make([]byte, nc.Size)
+			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+			var x uint64
+			start = time.Now()
+			for {
+				n, err := r.Read(block)
+				if err != nil {
+					fmt.Printf("expecting: %v\n", nc.Units*nc.Size)
+					fmt.Printf("got %v %v\n", x,
+						nc.Units*nc.Size-uint64(x))
+					return time.Now().Sub(start), x, err
+				}
+
+				x += uint64(n)
+				if x >= nc.Units*nc.Size {
+					goto done
+				}
+
+				select {
+				case <-ctx.Done():
+					return time.Now().Sub(start), x, ctx.Err()
+				default:
+				}
+
+			}
+
+		case "read":
+			// Client read is server write
+			verb = "written"
+			block, err := util.Random(int(nc.Size))
+			if err != nil {
+				return 0, 0, err
+			}
+			var x uint64
+			start = time.Now()
+			for i := uint64(0); i < nc.Units; i++ {
+				n, err := conn.Write(block)
+				if err != nil {
+					return time.Now().Sub(start), x, err
+				}
+				x += uint64(n)
+			}
+
+		default:
+			return 0, 0, fmt.Errorf("invalid net command: %v",
+				nc.Command)
+		}
+	done:
+		fmt.Printf("%v bytes %v in %v\n", verb,
+			bytesize.New(float64(nc.Units*nc.Size)),
+			time.Now().Sub(start))
+		conn.Close()
+
+		return time.Now().Sub(start), nc.Units * nc.Size, err
+	}
 }

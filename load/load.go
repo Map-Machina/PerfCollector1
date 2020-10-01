@@ -386,16 +386,15 @@ type NetServerResult struct {
 func NetServer(parent context.Context, maxDuration time.Duration, listen string) (NetServerResult, error) {
 	ctx, _ := context.WithTimeout(parent, maxDuration)
 
-	nsr := NetServerResult{} // Always return nsr
-
 	lc := net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "tcp", listen)
 	if err != nil {
-		return nsr, err
+		return NetServerResult{}, err
 	}
 
 	tl := ln.(*net.TCPListener)
 	for {
+		nsr := NetServerResult{} // Always return nsr
 		// See if context has expired
 		select {
 		case <-ctx.Done():

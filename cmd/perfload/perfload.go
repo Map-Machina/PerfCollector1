@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"math/big"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -293,7 +290,6 @@ func network(ctx context.Context, a map[string]string) error {
 		timeout = 60 * time.Second
 		fmt.Printf("timeout defaulting to: %v\n", timeout)
 	}
-	// XXX add timeout
 
 	if server {
 		listen, err := util.ArgAsString("listen", a)
@@ -302,11 +298,14 @@ func network(ctx context.Context, a map[string]string) error {
 			fmt.Printf("listen defaulting to: %v\n", listen)
 		}
 
-		d, b, err := load.NetServer(ctx, timeout, listen)
+		nsr, err := load.NetServer(ctx, timeout, listen)
 		if err != nil {
 			return fmt.Errorf("server error duration %v bytes %v: %v",
-				d, b, err)
+				nsr.Duration, nsr.Bytes, err)
 		}
+		fmt.Printf("client %v %v %v in %v\n", nsr.RemoteAddr,
+			nsr.Verb, bytesize.New(float64(nsr.Bytes)),
+			nsr.Duration)
 
 		return nil
 	}
@@ -339,80 +338,14 @@ func network(ctx context.Context, a map[string]string) error {
 			bytesize.New(float64(size)))
 	}
 
-	conn, err := net.Dial("tcp", connect)
+	d, b, err := load.NetClient(ctx, timeout, command, connect, units, size)
 	if err != nil {
-		return err
+		return fmt.Errorf("client error duration %v bytes %v: %v",
+			d, b, err)
 	}
 
-	// Write command. The command is written in JSON with a terminating \n.
-	// This is needed becasue readers are greedy and the other end may have
-	// leftovers causing a short read.
-	//
-	// By writing a JSON \n terminated blob the reader can read up to \n
-	// without affecting the underlying raw connection.
-	jsonBlob, err := json.Marshal(load.NetCommand{
-		Version: 1,
-		Command: command,
-		Units:   uint64(units),
-		Size:    uint64(size),
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(conn, "%s\n", jsonBlob)
-
-	var (
-		verb string
-	)
-	start := time.Now()
-	switch command {
-	case "write":
-		verb = "written"
-		var x uint64
-		block := make([]byte, size)
-		for {
-			n, err := conn.Write(block)
-			if err != nil {
-				return err
-			}
-			x += uint64(n)
-			if x >= uint64(units)*uint64(size) {
-				fmt.Printf("x %v\n", x)
-				break
-			}
-		}
-	case "read":
-		verb = "read"
-		block := make([]byte, size)
-		var x uint64
-		start = time.Now()
-		for {
-			n, err := conn.Read(block)
-			if err != nil {
-				return err
-			}
-			x += uint64(n)
-			if x >= uint64(units)*uint64(size) {
-				break
-			}
-		}
-
-	default:
-	}
-
-	fmt.Printf("%v bytes %v in %v\n", verb,
-		bytesize.New(float64(units*uint(size))),
-		time.Now().Sub(start))
-
-	// Wait for EOF
-	b := []byte{0xff}
-	_, err = conn.Read(b)
-	if err != nil {
-		if err == io.EOF {
-			return nil
-		}
-		return err
-	}
+	fmt.Printf("%v bytes %v in %v\n", command,
+		bytesize.New(float64(b)), d)
 
 	return nil
 }

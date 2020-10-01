@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/businessperformancetuning/perfcollector/util"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/inhies/go-bytesize"
 )
 
@@ -115,11 +115,26 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 	return userLoops, systemLoops, nil
 }
 
+// Declare some variables for unit of work tests. This probably needs to become
+// a receiver so that we can vary the load based on the hardware.
+var (
+	unitStart = uint32(0xaa55aa55)
+	unitCount = uint32(17)
+	unitXor   = uint32(0x55aa55aa)
+	mem       [1024 * 1024]uint32
+)
+
 func unit() {
-	//var mem [1024 * 1024]int32
-	var mem [1024 * 1024]int32
 	for k := range mem {
-		mem[k] = mem[k] + int32(k)
+		// Spin CPU for a bit so that we don't tight loop memory which
+		// interferes with parallelzing the load.
+		var x uint32
+		for i := unitStart; i < unitStart+unitCount; i++ {
+			x = x + i
+			x |= unitXor
+		}
+		// Do a Read-Modify-Write with result and index.
+		mem[k] = (mem[k] + uint32(k)) ^ uint32(x)
 	}
 }
 
@@ -358,13 +373,25 @@ type NetCommand struct {
 	Size    uint64
 }
 
-func NetServer(parent context.Context, maxDuration time.Duration, listen string) (time.Duration, uint64, error) {
+type NetServerResult struct {
+	Duration   time.Duration
+	Bytes      uint64
+	Verb       string
+	RemoteAddr string
+}
+
+// NetServer waits for a client connection and reads/writes units*size bytes
+// based on the client command.
+// Note that NetServer returns bytes processed and not units processes.
+func NetServer(parent context.Context, maxDuration time.Duration, listen string) (NetServerResult, error) {
 	ctx, _ := context.WithTimeout(parent, maxDuration)
+
+	nsr := NetServerResult{} // Always return nsr
 
 	lc := net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "tcp", listen)
 	if err != nil {
-		return 0, 0, err
+		return nsr, err
 	}
 
 	tl := ln.(*net.TCPListener)
@@ -372,7 +399,7 @@ func NetServer(parent context.Context, maxDuration time.Duration, listen string)
 		// See if context has expired
 		select {
 		case <-ctx.Done():
-			return 0, 0, ctx.Err()
+			return nsr, ctx.Err()
 		default:
 		}
 
@@ -384,11 +411,10 @@ func NetServer(parent context.Context, maxDuration time.Duration, listen string)
 				if e.Timeout() {
 					continue
 				}
-				spew.Dump(e)
 			}
-			return 0, 0, err
+			return nsr, err
 		}
-		fmt.Printf("Client connected: %v\n", conn.RemoteAddr())
+		nsr.RemoteAddr = conn.RemoteAddr().String()
 
 		// We only allow one connection at a time
 
@@ -396,44 +422,39 @@ func NetServer(parent context.Context, maxDuration time.Duration, listen string)
 		r := bufio.NewReader(conn)
 		jsonBlob, err := r.ReadString('\n')
 		if err != nil {
-			return 0, 0, err
+			return nsr, err
 		}
 
 		var nc NetCommand
 		err = json.Unmarshal([]byte(jsonBlob), &nc)
 		if err != nil {
-			return 0, 0, err
+			return nsr, err
 		}
 
-		var (
-			verb  string
-			start time.Time
-		)
+		var start time.Time
 		switch nc.Command {
 		case "write":
 			// Client write is server read
-			verb = "read"
+			nsr.Verb = nc.Command
 			block := make([]byte, nc.Size)
 			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-			var x uint64
 			start = time.Now()
 			for {
 				n, err := r.Read(block)
+				nsr.Bytes += uint64(n)
 				if err != nil {
-					fmt.Printf("expecting: %v\n", nc.Units*nc.Size)
-					fmt.Printf("got %v %v\n", x,
-						nc.Units*nc.Size-uint64(x))
-					return time.Now().Sub(start), x, err
+					nsr.Duration = time.Now().Sub(start)
+					return nsr, err
 				}
 
-				x += uint64(n)
-				if x >= nc.Units*nc.Size {
+				if nsr.Bytes >= nc.Units*nc.Size {
 					goto done
 				}
 
 				select {
 				case <-ctx.Done():
-					return time.Now().Sub(start), x, ctx.Err()
+					nsr.Duration = time.Now().Sub(start)
+					return nsr, ctx.Err()
 				default:
 				}
 
@@ -441,31 +462,122 @@ func NetServer(parent context.Context, maxDuration time.Duration, listen string)
 
 		case "read":
 			// Client read is server write
-			verb = "written"
+			nsr.Verb = nc.Command
 			block, err := util.Random(int(nc.Size))
 			if err != nil {
-				return 0, 0, err
+				return nsr, err
 			}
-			var x uint64
 			start = time.Now()
 			for i := uint64(0); i < nc.Units; i++ {
 				n, err := conn.Write(block)
+				nsr.Bytes += uint64(n)
 				if err != nil {
-					return time.Now().Sub(start), x, err
+					nsr.Duration = time.Now().Sub(start)
+					return nsr, err
 				}
-				x += uint64(n)
 			}
 
 		default:
-			return 0, 0, fmt.Errorf("invalid net command: %v",
+			return nsr, fmt.Errorf("invalid net command: %v",
 				nc.Command)
 		}
 	done:
-		fmt.Printf("%v bytes %v in %v\n", verb,
-			bytesize.New(float64(nc.Units*nc.Size)),
-			time.Now().Sub(start))
+		nsr.Duration = time.Now().Sub(start)
 		conn.Close()
 
-		return time.Now().Sub(start), nc.Units * nc.Size, err
+		return nsr, err
 	}
+}
+
+// NetClient connects and reads/writes units*size bytes.
+// Note that NetClient returns bytes processed and not units processes.
+func NetClient(parent context.Context, maxDuration time.Duration, command, connect string, units uint, size bytesize.ByteSize) (time.Duration, uint64, error) {
+	ctx, _ := context.WithTimeout(parent, maxDuration)
+
+	conn, err := net.Dial("tcp", connect)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Write command. The command is written in JSON with a terminating \n.
+	// This is needed becasue readers are greedy and the other end may have
+	// leftovers causing a short read.
+	//
+	// By writing a JSON \n terminated blob the reader can read up to \n
+	// without affecting the underlying raw connection.
+	jsonBlob, err := json.Marshal(NetCommand{
+		Version: 1,
+		Command: command,
+		Units:   uint64(units),
+		Size:    uint64(size),
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	_, err = fmt.Fprintf(conn, "%s\n", jsonBlob)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var (
+		x     uint64
+		start time.Time
+	)
+	switch command {
+	case "write":
+		block := make([]byte, size)
+		start = time.Now()
+		for {
+			n, err := conn.Write(block)
+			if err != nil {
+				return time.Now().Sub(start), x, err
+			}
+			x += uint64(n)
+			if x >= uint64(units)*uint64(size) {
+				break
+			}
+
+			select {
+			case <-ctx.Done():
+				return time.Now().Sub(start), x, ctx.Err()
+			default:
+			}
+		}
+
+	case "read":
+		block := make([]byte, size)
+		start = time.Now()
+		for {
+			n, err := conn.Read(block)
+			if err != nil {
+				return time.Now().Sub(start), x, err
+			}
+			x += uint64(n)
+			if x >= uint64(units)*uint64(size) {
+				break
+			}
+
+			select {
+			case <-ctx.Done():
+				return time.Now().Sub(start), x, ctx.Err()
+			default:
+			}
+		}
+
+	default:
+	}
+
+	d := time.Now().Sub(start)
+
+	// Wait for EOF
+	b := []byte{0xff}
+	_, err = conn.Read(b)
+	if err != nil {
+		if err == io.EOF {
+			return d, x, nil
+		}
+		return d, x, err
+	}
+
+	return d, x, nil
 }

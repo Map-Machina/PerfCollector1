@@ -16,7 +16,7 @@ require (
 	github.com/jrick/logrotate v1.0.0
 	github.com/lib/pq v1.8.0
 	github.com/minio/sio v0.2.0 // indirect
-	github.com/prometheus/common v0.10.0 // indirect
+	github.com/prometheus/common v0.10.0
 	github.com/prometheus/procfs v0.1.3 // indirect
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e

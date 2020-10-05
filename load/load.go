@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"math"
 	"math/big"
 	"net"
 	"os"
@@ -15,11 +17,75 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/inhies/go-bytesize"
 )
 
-func userIdle(duration time.Duration) {
+// MeasureUnitsPerSecond runs a single core at maximum speed for 1 second. It
+// then runs the same load for the provided duration and ensures that the rough
+// and fine measurement are within 5% of one another.
+func MeasureUnitsPerSecond(ctx context.Context, fine uint) (float64, error) {
+	// Get rough measurement
+	durationRough, unitsRough, err := ExecuteParallel(ctx, time.Second,
+		10000, 1, RMW)
+	if err != nil {
+		// Expect error
+		if err != context.DeadlineExceeded {
+			return 0, err
+		}
+	}
+	//fmt.Printf("rough measurement: %v %v\n", unitsRough, durationRough)
+
+	// Verify measurement
+	durationFine, unitsFine, err := ExecuteParallel(ctx,
+		2*time.Duration(fine)*time.Second, uint64(fine)*unitsRough,
+		1, RMW)
+	if err != nil {
+		return 0, err
+	}
+	//fmt.Printf("fine measurement: %v %v\n", unitsFine, durationFine)
+
+	// If units or time are not within 5% error out to let caller know that
+	// the test needs to probably be restarted.
+	ur := float64(unitsRough)
+	uf := float64(unitsFine) / float64(fine)
+	variance := (ur - uf) / uf
+	//fmt.Printf("variance measurement: ur %v uf %v var %v\n", ur, uf, variance)
+	if math.Abs(variance) > 0.05 {
+		return 0, fmt.Errorf("invalid units measurement: %.2f%%",
+			variance*100)
+	}
+
+	// If time is not withing 5% also let caller know.
+	df := float64(durationFine) / float64(fine)
+	durationVariance := (float64(durationRough) - df) / df
+	if math.Abs(durationVariance) > 0.05 {
+		return 0, fmt.Errorf("invalid time measurement: %.2f%%",
+			durationVariance*100)
+	}
+	//fmt.Printf("variance measurement: var %v\n", durationVariance)
+
+	return uf, nil
+}
+
+// NumCores returns the number of CPU cores and the number of threads.
+func NumCores() (uint, uint, error) {
+	// Assume linux for now.
+	blob, err := ioutil.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return 0, 0, err
+	}
+	ci, err := parser.ProcessCPUInfo(blob)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return ci[0].CPUCores, uint(len(ci)), nil
+}
+
+// UserIdle idles the caller for the provided duration.
+func UserIdle(duration time.Duration) {
 	to := time.After(duration)
 	<-to
 }
@@ -35,7 +101,7 @@ func user(percent float64, duration time.Duration) int {
 	busy := float64(duration) * percent
 	idle := float64(time.Second) - busy
 	userLoops := UserLoad(time.Duration(busy))
-	userIdle(time.Duration(idle))
+	UserIdle(time.Duration(idle))
 	return userLoops
 }
 
@@ -63,7 +129,7 @@ func system(percent float64, duration time.Duration) int {
 	busy := float64(duration) * percent
 	idle := float64(time.Second) - busy
 	systemLoops := systemLoad(time.Duration(busy))
-	userIdle(time.Duration(idle))
+	UserIdle(time.Duration(idle))
 	return systemLoops
 }
 
@@ -94,7 +160,7 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 	for i := time.Duration(0); i < seconds; i++ {
 		userLoops += UserLoad(userDuration)
 		systemLoops += systemLoad(systemDuration)
-		userIdle(idleDuration)
+		UserIdle(idleDuration)
 	}
 
 	// Deal with fraction. This is rather expensive and should be avoided.
@@ -109,7 +175,7 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 		}
 		userLoops += UserLoad(userFractionDuration)
 		systemLoops += systemLoad(systemFractionDuration)
-		userIdle(idleFractionDuration)
+		UserIdle(idleFractionDuration)
 	}
 
 	return userLoops, systemLoops, nil

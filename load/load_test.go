@@ -150,7 +150,7 @@ func worker(ctx context.Context, worker uint, wg *sync.WaitGroup, c chan workLoa
 			replayLoad := math.RoundToEven(load.measuredLoad *
 				load.unitsPerSecond *
 				float64(load.measuredFrequency))
-			fmt.Printf("replayload %v: %v\n", worker, replayLoad)
+			//fmt.Printf("replayload %v: %v\n", worker, replayLoad)
 			_ = UserWork(int(replayLoad))
 			replayDuration := time.Now().Sub(replayStart)
 
@@ -158,9 +158,11 @@ func worker(ctx context.Context, worker uint, wg *sync.WaitGroup, c chan workLoa
 			idle := time.Duration(load.measuredFrequency)*time.Second -
 				replayDuration
 			if idle < 0 {
-				panic("can't keep up")
+				s := fmt.Sprintf("can't keep up %v", idle)
+				fmt.Printf("--- %v\n", s)
+			} else {
+				UserIdle(idle)
 			}
-			UserIdle(idle)
 		}
 	}
 }
@@ -185,12 +187,19 @@ func TestEnd2End(t *testing.T) {
 	t.Logf("cores %v virtual %v ht %v threads %v",
 		actualCores, virtualCores, ht, threads)
 
-	// Determine units/second
-	us, err := MeasureUnitsPerSecond(ctx, virtualCores, 0)
+	// Determine units/second while using full speed
+	usFull, err := MeasureUnitsPerSecond(ctx, actualCores, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("units/second = %v", us)
+	t.Logf("units/second full speed = %v", usFull)
+
+	// Determine units/second while using hyperthreading
+	usHT, err := MeasureUnitsPerSecond(ctx, virtualCores, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("units/second hyperthreading = %v", usHT)
 
 	// Launch workers that perform load
 	var wg sync.WaitGroup
@@ -201,10 +210,10 @@ func TestEnd2End(t *testing.T) {
 	}
 
 	// Measure load => cpu_percentage/duration
-	measuredLoad := []float64{0.2}
-	measuredLoad2 := []float64{0.2}
-	//measuredLoad := []float64{0.25, 0.33, 0.10, 0.80, 1.00, 0.55}
-	//measuredLoad2 := []float64{0.50, 0.11, 0.20, 0.10, 1.00, 0.45}
+	//measuredLoad := []float64{1}
+	//measuredLoad2 := []float64{1}
+	measuredLoad := []float64{0.25, 0.33, 0.10, 0.80, 1.00, 0.55}
+	measuredLoad2 := []float64{0.50, 0.11, 0.20, 0.10, 1.00, 0.45}
 	measuredFrequency := 1 // Every 5 seconds
 
 	// Replay load
@@ -226,51 +235,29 @@ func TestEnd2End(t *testing.T) {
 			// workload for any work > 50% load.
 			for i := uint(0); i < virtualCores; i += threads {
 				// Combine workload
-				// XXX make for loop instead of asuming 1 thread!
+				// XXX make for loop instead of assuming 1 thread!
 				load := measuredLoad[k] + measuredLoad2[k]
-				if load > 1 {
-					//fullLoad := 0.5
-					//reducedLoad := (load - 0.5) / float64(threads)
-					fullLoad := 1.0
-					reducedLoad := 0.0 //(load - 1.0) / float64(threads)
-					t.Logf("%v big load %v: %v %v -> full %v reduced %v",
-						i, load, measuredLoad[k], measuredLoad2[k],
-						fullLoad, reducedLoad)
-					c <- workLoad{
-						measuredLoad:      fullLoad,
-						measuredFrequency: measuredFrequency,
-						unitsPerSecond:    us,
-					}
-
-					c <- workLoad{
-						measuredLoad:      reducedLoad,
-						measuredFrequency: measuredFrequency,
-						unitsPerSecond:    us,
-					}
-				} else {
-					fudge := 2.0
-					t.Logf("%v small load %v %v",
-						i, measuredLoad[k], measuredLoad2[k])
-					c <- workLoad{
-						measuredLoad:      (measuredLoad[k] + measuredLoad2[k]) * fudge,
-						measuredFrequency: measuredFrequency,
-						unitsPerSecond:    us,
-					}
-
-					//c <- workLoad{
-					//	measuredLoad:      measuredLoad2[k] * fudge,
-					//	measuredFrequency: measuredFrequency,
-					//	unitsPerSecond:    us,
-					//}
+				l := load / 2
+				t.Logf("%v small load %v %v -> %v",
+					i, measuredLoad[k], measuredLoad2[k], l)
+				c <- workLoad{
+					measuredLoad:      l, //measuredLoad[k],
+					measuredFrequency: measuredFrequency,
+					unitsPerSecond:    usHT,
+				}
+				c <- workLoad{
+					measuredLoad:      l, //measuredLoad2[k],
+					measuredFrequency: measuredFrequency,
+					unitsPerSecond:    usHT,
 				}
 			}
 		} else {
 			// virtualCores == actualCores
-			for i := uint(0); i < virtualCores; i++ {
+			for i := uint(0); i < actualCores; i++ {
 				c <- workLoad{
 					measuredLoad:      measuredLoad[k],
 					measuredFrequency: measuredFrequency,
-					unitsPerSecond:    us,
+					unitsPerSecond:    usFull,
 				}
 			}
 		}

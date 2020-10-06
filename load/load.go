@@ -88,6 +88,15 @@ func NumCores() (uint, uint, error) {
 	return ci[0].CPUCores, uint(len(ci)), nil
 }
 
+// CPUStat take CPU measurement.
+func CPUStat() (parser.Stat, error) {
+	cpuStart, err := util.Measure("/proc/stat")
+	if err != nil {
+		return parser.Stat{}, err
+	}
+	return parser.ProcessStat(cpuStart)
+}
+
 // UserIdle idles the caller for the provided duration.
 func UserIdle(duration time.Duration) {
 	to := time.After(duration)

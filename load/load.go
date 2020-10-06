@@ -25,16 +25,20 @@ import (
 // MeasureUnitsPerSecond runs a single core at maximum speed for 1 second. It
 // then runs the same load for the provided duration and ensures that the rough
 // and fine measurement are within 5% of one another.
-func MeasureUnitsPerSecond(ctx context.Context, fine uint) (float64, error) {
+func MeasureUnitsPerSecond(ctx context.Context, cores, fine uint) (float64, error) {
 	// Get rough measurement
 	durationRough, unitsRough, err := ExecuteParallel(ctx, time.Second,
-		10000, 1, RMW)
+		10000, uint64(cores), RMW)
 	if err != nil {
 		// Expect error
 		if err != context.DeadlineExceeded {
 			return 0, err
 		}
 	}
+	if fine == 0 {
+		return float64(unitsRough) / float64(cores), nil
+	}
+
 	//fmt.Printf("rough measurement: %v %v\n", unitsRough, durationRough)
 
 	// Verify measurement

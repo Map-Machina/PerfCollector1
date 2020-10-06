@@ -140,6 +140,9 @@ func worker(ctx context.Context, worker uint, wg *sync.WaitGroup, c chan workLoa
 			return
 
 		case load := <-c:
+			if load.measuredLoad <= 0 {
+				continue
+			}
 			// Include everything in time measurement
 			replayStart := time.Now()
 
@@ -147,12 +150,16 @@ func worker(ctx context.Context, worker uint, wg *sync.WaitGroup, c chan workLoa
 			replayLoad := math.RoundToEven(load.measuredLoad *
 				load.unitsPerSecond *
 				float64(load.measuredFrequency))
+			fmt.Printf("replayload %v: %v\n", worker, replayLoad)
 			_ = UserWork(int(replayLoad))
 			replayDuration := time.Now().Sub(replayStart)
 
 			// Idle CPU
 			idle := time.Duration(load.measuredFrequency)*time.Second -
 				replayDuration
+			if idle < 0 {
+				panic("can't keep up")
+			}
 			UserIdle(idle)
 		}
 	}
@@ -161,13 +168,6 @@ func worker(ctx context.Context, worker uint, wg *sync.WaitGroup, c chan workLoa
 func TestEnd2End(t *testing.T) {
 	t.Logf("MAXPROCS = %v", runtime.GOMAXPROCS(-1))
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Determine units/second
-	us, err := MeasureUnitsPerSecond(ctx, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("units/second = %v", us)
 
 	// Figure out how many cores we have
 	actualCores, virtualCores, err := NumCores()
@@ -178,19 +178,34 @@ func TestEnd2End(t *testing.T) {
 	if virtualCores != 0 && actualCores != virtualCores {
 		ht = true
 	}
-	t.Logf("cores = %v virtual = %v ht = %v", actualCores, virtualCores, ht)
+	threads := virtualCores / actualCores
+	if virtualCores%actualCores != 0 {
+		t.Fatalf("invalid threads %v", virtualCores%actualCores)
+	}
+	t.Logf("cores %v virtual %v ht %v threads %v",
+		actualCores, virtualCores, ht, threads)
+
+	// Determine units/second
+	us, err := MeasureUnitsPerSecond(ctx, virtualCores, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("units/second = %v", us)
 
 	// Launch workers that perform load
 	var wg sync.WaitGroup
 	c := make(chan workLoad)
-	for i := uint(0); i < actualCores; i++ {
+	for i := uint(0); i < virtualCores; i++ {
 		wg.Add(1)
 		go worker(ctx, i, &wg, c)
 	}
 
 	// Measure load => cpu_percentage/duration
-	measuredLoad := []float64{0.25, 0.33, 0.1, 0.8, 0.9, 0.45}
-	measuredFrequency := 5 // Every 5 seconds
+	measuredLoad := []float64{0.2}
+	measuredLoad2 := []float64{0.2}
+	//measuredLoad := []float64{0.25, 0.33, 0.10, 0.80, 1.00, 0.55}
+	//measuredLoad2 := []float64{0.50, 0.11, 0.20, 0.10, 1.00, 0.45}
+	measuredFrequency := 1 // Every 5 seconds
 
 	// Replay load
 	loopStart := time.Now()
@@ -206,13 +221,61 @@ func TestEnd2End(t *testing.T) {
 		}
 
 		// Send of work load
-		for i := uint(0); i < actualCores; i++ {
-			c <- workLoad{
-				measuredLoad:      measuredLoad[k],
-				measuredFrequency: measuredFrequency,
-				unitsPerSecond:    us,
+		if ht {
+			// Since we are hyperthreading we have to half the
+			// workload for any work > 50% load.
+			for i := uint(0); i < virtualCores; i += threads {
+				// Combine workload
+				// XXX make for loop instead of asuming 1 thread!
+				load := measuredLoad[k] + measuredLoad2[k]
+				if load > 1 {
+					//fullLoad := 0.5
+					//reducedLoad := (load - 0.5) / float64(threads)
+					fullLoad := 1.0
+					reducedLoad := 0.0 //(load - 1.0) / float64(threads)
+					t.Logf("%v big load %v: %v %v -> full %v reduced %v",
+						i, load, measuredLoad[k], measuredLoad2[k],
+						fullLoad, reducedLoad)
+					c <- workLoad{
+						measuredLoad:      fullLoad,
+						measuredFrequency: measuredFrequency,
+						unitsPerSecond:    us,
+					}
+
+					c <- workLoad{
+						measuredLoad:      reducedLoad,
+						measuredFrequency: measuredFrequency,
+						unitsPerSecond:    us,
+					}
+				} else {
+					fudge := 2.0
+					t.Logf("%v small load %v %v",
+						i, measuredLoad[k], measuredLoad2[k])
+					c <- workLoad{
+						measuredLoad:      (measuredLoad[k] + measuredLoad2[k]) * fudge,
+						measuredFrequency: measuredFrequency,
+						unitsPerSecond:    us,
+					}
+
+					//c <- workLoad{
+					//	measuredLoad:      measuredLoad2[k] * fudge,
+					//	measuredFrequency: measuredFrequency,
+					//	unitsPerSecond:    us,
+					//}
+				}
+			}
+		} else {
+			// virtualCores == actualCores
+			for i := uint(0); i < virtualCores; i++ {
+				c <- workLoad{
+					measuredLoad:      measuredLoad[k],
+					measuredFrequency: measuredFrequency,
+					unitsPerSecond:    us,
+				}
 			}
 		}
+
+		// XXX don't sleep, wait for signal
 		time.Sleep(time.Duration(measuredFrequency) * time.Second)
 
 		// Take CPU measurement

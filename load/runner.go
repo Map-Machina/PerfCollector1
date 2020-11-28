@@ -2,6 +2,7 @@ package load
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/businessperformancetuning/perfcollector/database"
+	"github.com/businessperformancetuning/perfcollector/parser"
 )
 
 type LoadError struct {
@@ -58,6 +60,8 @@ func (w *Worker) worker(ctx context.Context, id uint) {
 			replayLoad := math.RoundToEven(cpuLoad *
 				w.unitsPerSecond *
 				float64(w.measuredFrequency))
+			//fmt.Printf("replayLoad %v cl %v us %v fr %v\n",
+			//	replayLoad, cpuLoad, w.unitsPerSecond, w.measuredFrequency)
 			_ = UserWork(int(replayLoad))
 
 			w.completeC <- int(replayLoad)
@@ -148,10 +152,189 @@ func (w *Worker) WaitForExit() {
 	w.wg.Wait()
 }
 
-//func (w *worker) Train(percentage float64) {
-//	if w.hyperThreading {
-//	}
-//}
+type trainError struct {
+	err error
+}
+
+func (te trainError) Error() string {
+	return te.err.Error()
+}
+
+func (w *Worker) train(cpuLoad float64) (int, error) {
+	if cpuLoad <= 0 || cpuLoad > 100 {
+		return 0, fmt.Errorf("invalid load %v", cpuLoad)
+	}
+
+	// Short circuit some values.
+	if cpuLoad == 0 {
+		return 0, nil
+	} else if cpuLoad == 100 {
+		return int(w.unitsPerSecond), nil
+	}
+
+	// Rough CPU usage per core
+	replayLoad := math.RoundToEven(cpuLoad / 100 *
+		w.unitsPerSecond * float64(w.measuredFrequency))
+	//fmt.Printf("replayLoad %v\n", replayLoad)
+	// Execute work
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := uint(0); i < w.virtualCores; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			UserWork(int(replayLoad))
+		}()
+	}
+	wg.Wait()
+
+	idleDuration := time.Duration(w.measuredFrequency)*time.Second - time.Now().Sub(start)
+	if idleDuration < 0 {
+		return 0, trainError{
+			err: fmt.Errorf("took too long %v", idleDuration),
+		}
+	} else {
+		UserIdle(idleDuration)
+	}
+	return int(replayLoad), nil
+}
+
+func (w *Worker) Train() (map[int]int, error) {
+	loadPercent := make(map[int]int) // [percent]load
+	for i := 1; i < 10; i++ {
+		load := 10.0 * float64(i)
+		percentage := load
+		margin := 0.05 // percent margin
+		idle := 100.0 - load
+		maxDiff := margin * idle
+
+		loadFound := false
+		//fmt.Printf("=== looking for %v\n", load)
+		for retry := 0; retry < 5; retry++ {
+			// Start work
+			cs, err := CPUStat()
+			if err != nil {
+				return nil, err
+			}
+
+			x, err := w.train(load)
+			if err != nil {
+				var te trainError
+				if errors.As(err, &te) {
+					load--
+					//fmt.Printf("---%v\n", te)
+					continue
+				} else {
+					return nil, err
+				}
+			}
+
+			// End work
+			ce, err := CPUStat()
+			if err != nil {
+				return nil, err
+			}
+
+			s, err := parser.CubeStat(0, 0, 0, 0, &cs, &ce)
+			if err != nil {
+				return nil, err
+			}
+
+			//fmt.Printf("%v < %v < %v\n", idle-maxDiff, s[0].Idle, idle+maxDiff)
+			if s[0].Idle > idle-maxDiff && s[0].Idle < idle+maxDiff {
+				//fmt.Printf("Within %v%% margin\n", margin*100)
+				loadFound = true
+				loadPercent[int(percentage)] = x
+				break
+			} else {
+				// expected idle, got s[0].Idle
+				if s[0].Idle < idle-maxDiff {
+					load--
+				} else {
+					load++
+				}
+			}
+		}
+		if !loadFound {
+			return nil, fmt.Errorf("no load found within 5%%")
+		}
+	}
+
+	return loadPercent, nil
+}
+
+func (w *Worker) Train_(cpuLoad float64) {
+	if cpuLoad <= 0 || cpuLoad > 100 {
+		return
+	}
+
+	// Rough CPU usage per core
+	replayLoad := math.RoundToEven(cpuLoad / 100 *
+		w.unitsPerSecond * float64(w.measuredFrequency))
+	//replayLoad = 41
+restart:
+	//fmt.Printf("%v rl %v us %v mf %v vc %v\n", cpuLoad, replayLoad, w.unitsPerSecond,
+	//float64(w.measuredFrequency), float64(w.virtualCores))
+
+	// Start work
+	cs, err := CPUStat()
+	if err != nil {
+		panic(err)
+	}
+
+	// Execute work
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := uint(0); i < w.virtualCores; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			UserWork(int(replayLoad))
+		}()
+	}
+	wg.Wait()
+	idleDuration := time.Duration(w.measuredFrequency)*time.Second - time.Now().Sub(start)
+	if idleDuration < 0 {
+		x := 0.05 * replayLoad
+		replayLoad = replayLoad - x
+		goto restart
+		fmt.Printf(fmt.Sprintf("idleDuration %v", idleDuration))
+	} else {
+		UserIdle(idleDuration)
+	}
+
+	// End work
+	ce, err := CPUStat()
+	if err != nil {
+		panic(err)
+	}
+
+	s, err := parser.CubeStat(0, 0, 0, 0, &cs, &ce)
+	if err != nil {
+		panic(err)
+	}
+
+	margin := 0.05 // percent margin
+	idle := 100.0 - cpuLoad
+	maxDiff := margin * idle
+	fmt.Printf("%v < %v < %v\n", idle-maxDiff, s[0].Idle, idle+maxDiff)
+	if s[0].Idle > idle-maxDiff && s[0].Idle < idle+maxDiff {
+		fmt.Printf("Within %v%% margin\n", margin*100)
+	} else {
+		// expected idle, got s[0].Idle
+		// XXX ad missing case
+		if s[0].Idle < idle-maxDiff {
+			x := (idle - s[0].Idle) / 100 * replayLoad
+			replayLoad = replayLoad - x
+			fmt.Printf("new replayLoad: %v %v\n", replayLoad, x)
+		} else {
+			x := (idle - s[0].Idle) / 100 * replayLoad
+			replayLoad = replayLoad + x
+			fmt.Printf("new replayLoad: %v %v\n", replayLoad, x)
+		}
+		goto restart
+	}
+}
 
 func NewWorkerPool(ctx context.Context, frequency int) (*Worker, error) {
 	var (

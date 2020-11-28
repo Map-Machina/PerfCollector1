@@ -425,6 +425,67 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 	return types.Encode(reply)
 }
 
+func (p *PerfCollector) handleStartReplay(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handleStartReplay %v", cmd.Cmd)
+	defer log.Tracef("handleStartReplay %v exit", cmd.Cmd)
+
+	sr, ok := cmd.Payload.(types.PCStartReplay)
+	if !ok {
+		return protocolError(cmd.Tag, "command type "+
+			"assertion error %v, %T", cmd.Cmd, sr)
+	}
+
+	// Return if training is in progress,
+	// XXX make atomic
+	//if p.trainingInProgress {
+	//	return protocolError(cmd.Tag, "bad frequency")
+	//}
+
+	// Verify frequency.
+	if sr.Frequency < time.Second {
+		return protocolError(cmd.Tag, "bad frequency")
+	}
+
+	// Verify that all systems exist.
+	for _, v := range sr.Systems {
+		if util.ValidSystem(v) {
+			continue
+		}
+		return protocolError(cmd.Tag, "invalid system %v", v)
+	}
+
+	// Only allow one replay to run.
+	//rr, err := p.replayRunning(ctx)
+	//if err != nil {
+	//	return internalError(cmd, err)
+	//}
+	//if cr {
+	//	return protocolError(cmd.Tag, "replay already running")
+	//}
+
+	// Disallow replay when collecting
+	cr, err := p.collectorRunning(ctx)
+	if err != nil {
+		return internalError(cmd, err)
+	}
+	if cr {
+		return protocolError(cmd.Tag, "collector running")
+	}
+
+	trainingData := make(map[int]int)
+	reply := types.PCCommand{
+		Version: types.PCVersion,
+		Tag:     cmd.Tag,
+		Cmd:     types.PCStartReplayReplyCmd,
+		Payload: types.PCStartReplayReply{
+			Training: trainingData,
+		},
+	}
+
+	// Ack remote.
+	return types.Encode(reply)
+}
+
 func (p *PerfCollector) handleStatusCollection(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
 	log.Tracef("handleStatusCollection %v", cmd.Cmd)
 	defer log.Tracef("handleStatusCollection %v exit", cmd.Cmd)
@@ -611,6 +672,9 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 
 		case types.PCStopCollectionCmd:
 			reply, err = p.handleStopCollection(ctx, cmd, channel)
+
+		case types.PCStartReplayCmd:
+			reply, err = p.handleStartReplay(ctx, cmd, channel)
 
 		default:
 			reply, err = protocolError(cmd.Tag, "unknown OOB "+

@@ -197,23 +197,23 @@ func MeasureCombined(percentUser, percentSystem float64, duration time.Duration)
 // Declare some variables for unit of work tests. This probably needs to become
 // a receiver so that we can vary the load based on the hardware.
 var (
-	unitStart = uint32(0xaa55aa55)
-	unitCount = uint32(17)
-	unitXor   = uint32(0x55aa55aa)
-	mem       [1024 * 1024]uint32
+	unitStart = uint64(0xaa55aa55)
+	unitCount = uint64(17)
+	unitXor   = uint64(0x55aa55aa)
+	mem       [512 * 1024]uint64 // 512 * 1024 * 8
 )
 
 func unit() {
 	for k := range mem {
 		// Spin CPU for a bit so that we don't tight loop memory which
-		// interferes with parallelzing the load.
-		var x uint32
+		// interferes with parallelizing the load.
+		var x uint64
 		for i := unitStart; i < unitStart+unitCount; i++ {
 			x = x + i
 			x |= unitXor
 		}
 		// Do a Read-Modify-Write with result and index.
-		mem[k] = (mem[k] + uint32(k)) ^ uint32(x)
+		mem[k] = (mem[k] + uint64(k)) ^ uint64(x)
 	}
 }
 

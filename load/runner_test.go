@@ -8,9 +8,35 @@ import (
 	"github.com/businessperformancetuning/perfcollector/parser"
 )
 
+func TestTrain(t *testing.T) {
+	ctx, _ := context.WithCancel(context.Background())
+	w, err := NewWorkerPool(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loads, err := w.Train()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("loads: %v", loads)
+
+	//for i := 1; i < 10; i++ {
+	//	//w.Train(90.0)
+	//	//if err != nil {
+	//	//	t.Fatal(err)
+	//	//}
+
+	//	w.Train(10.0 * float64(i))
+	//	if err != nil {
+	//		t.Fatal(err)
+	//	}
+	//}
+}
+
 func TestRunner(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	w, err := NewWorkerPool(ctx, 5) // 5 second measurements
+	w, err := NewWorkerPool(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +96,7 @@ func TestRunner(t *testing.T) {
 			work = append(work, database.Stat{Idle: tests[k].idle})
 		}
 
+	restart:
 		cs, err := CPUStat()
 		if err != nil {
 			t.Fatal(err)
@@ -79,11 +106,14 @@ func TestRunner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		_ = units
 
 		ce, err := CPUStat()
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		//currentUnits := float64(units)
 
 		// Cube data
 		stat, err := parser.CubeStat(0, 0, 0, 0, &cs, &ce)
@@ -91,16 +121,30 @@ func TestRunner(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		t.Logf("Executed units: %v idle %v", units, stat[0].Idle)
+		//t.Logf("Executed units: %v idle %v", units, stat[0].Idle)
 
 		// Calculate difference
+		margin := 0.05 // percent margin
 		idle := tests[k].idle
-		maxDiff := 0.1 * idle
-		t.Logf("%v < %v < %v", idle-maxDiff, stat[0].Idle, idle+maxDiff)
+		maxDiff := margin * idle
+		//t.Logf("%v < %v < %v", idle-maxDiff, stat[0].Idle, idle+maxDiff)
 		if stat[0].Idle > idle-maxDiff && stat[0].Idle < idle+maxDiff {
-			t.Logf("Within 10%% margin")
+			t.Logf("Within %v%% margin", margin*100)
 		} else {
-			t.Logf("outside 10%% margin")
+			//t.Logf("Outside %v%% margin %v", margin*100,
+			//	stat.StdDev(stat[0].Idle, []float64{prevUnits, currentUnits}))
+			if stat[0].Idle < idle {
+				for kk := range work {
+					work[kk].Idle += work[kk].Idle * 0.05
+					//t.Logf("+New idle: %v", work[kk].Idle)
+				}
+			} else {
+				for kk := range work {
+					work[kk].Idle -= work[kk].Idle * 0.05
+					//t.Logf("-New idle: %v", work[kk].Idle)
+				}
+			}
+			goto restart
 		}
 	}
 

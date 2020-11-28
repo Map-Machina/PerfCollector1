@@ -256,6 +256,16 @@ func (p *PerfCtl) oobHandler(s *session) error {
 					s.address, cmd.Payload)
 			}
 
+		case types.PCStartReplayReplyCmd:
+			rr, ok := cmd.Payload.(types.PCStartReplayReply)
+			if ok {
+				reply = rr
+			} else {
+				// Should not happen
+				log.Errorf("type assertion error %v: %T",
+					s.address, cmd.Payload)
+			}
+
 		default:
 			log.Errorf("oobHandler unknown request %v: %v",
 				s.address, cmd.Cmd)
@@ -478,6 +488,22 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, h HostIdentifie
 			return err
 		}
 
+	case "replay":
+		filename, err := util.ArgAsString("filename", a)
+		if err != nil {
+			return err
+		}
+		_ = filename
+		_, err = p.sendAndWait(ctx, s, types.PCCommand{
+			Cmd: types.PCStartReplayCmd,
+			Payload: types.PCStartReplay{
+				Frequency: 5 * time.Second,
+			},
+		})
+		if err != nil {
+			return err
+		}
+
 	case "once":
 		systems, err := util.ArgAsStringSlice("systems", a)
 		if err != nil {
@@ -577,6 +603,7 @@ func (p *PerfCtl) handleArgs(args []string) error {
 	case "once":
 	case "dir":
 	case "netcache":
+	case "replay":
 	default:
 		return fmt.Errorf("unknown command: %v", args[0])
 	}

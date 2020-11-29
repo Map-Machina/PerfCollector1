@@ -8,8 +8,6 @@ package main
 import (
 	"bufio"
 	"crypto/cipher"
-	"crypto/hmac"
-	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -21,12 +19,12 @@ import (
 	"strings"
 
 	"github.com/businessperformancetuning/license/license"
+	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/sharedconfig"
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/util"
 	flags "github.com/jessevdk/go-flags"
-	cp "golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -542,10 +540,7 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// Generate journal key from license material.
-	mac := hmac.New(sha256.New, []byte(cfg.License))
-	mac.Write([]byte(cfg.SiteID))
-	mac.Write([]byte(cfg.SiteName))
-	cfg.aead, err = cp.NewX(mac.Sum(nil))
+	cfg.aead, err = journal.CreateAEAD(cfg.License, cfg.SiteID, cfg.SiteName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not setup aead: %v", err)
 	}

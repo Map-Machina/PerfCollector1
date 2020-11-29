@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/businessperformancetuning/perfcollector/types"
+	cp "golang.org/x/crypto/chacha20poly1305"
 )
 
 var (
@@ -120,4 +123,12 @@ func ReadEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection,
 		return nil, err
 	}
 	return &wc, nil
+}
+
+// CreateAEAD returns an AEAD that is generated from a license.
+func CreateAEAD(license, siteID, siteName string) (cipher.AEAD, error) {
+	mac := hmac.New(sha256.New, []byte(license))
+	mac.Write([]byte(siteID))
+	mac.Write([]byte(siteName))
+	return cp.NewX(mac.Sum(nil))
 }

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,7 +17,6 @@ import (
 	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
-	cp "golang.org/x/crypto/chacha20poly1305"
 )
 
 var (
@@ -35,7 +32,7 @@ type config struct {
 	Config      flag.Value
 	ShowVersion bool
 	Verbose     bool
-	SiteID      uint
+	SiteID      string
 	Mode        string
 	Cache       string
 	SiteName    string
@@ -80,7 +77,7 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.Var(c.Config, "C", "config file")
 	fs.BoolVar(&c.ShowVersion, "V", false, "")
 	fs.BoolVar(&c.Verbose, "v", false, "")
-	fs.UintVar(&c.SiteID, "siteid", 0, "")
+	fs.StringVar(&c.SiteID, "siteid", "", "")
 	fs.StringVar(&c.Mode, "mode", "csv", "")
 	fs.StringVar(&c.Cache, "cache", "", "")
 	fs.StringVar(&c.SiteName, "sitename", "", "")
@@ -170,7 +167,7 @@ func loadConfig() (*config, []string, error) {
 		os.Exit(0)
 	}
 
-	if cfg.SiteID == 0 {
+	if cfg.SiteID == "" {
 		fmt.Fprintln(os.Stderr, "Must provide --siteid")
 		os.Exit(1)
 	}
@@ -312,7 +309,7 @@ func createNetCache(cache map[string]string) (map[string]parser.NIC, error) {
 }
 
 func csv(cfg *config, cur *journal.WrapPCCollection, cache map[string]parser.NIC) error {
-	if cur.Site != uint64(cfg.SiteID) {
+	if strconv.Itoa(int(cur.Site)) != cfg.SiteID {
 		// File should not have decrypted
 		return fmt.Errorf("unexpected site: %v", cur.Site)
 	}
@@ -542,12 +539,9 @@ func _main() error {
 
 	// Generate journal key from license material. There is no function for
 	// this in order to obfuscate this terrible trick.
-	mac := hmac.New(sha256.New, []byte(cfg.License))
-	mac.Write([]byte(strconv.FormatUint(uint64(cfg.SiteID), 10)))
-	mac.Write([]byte(cfg.SiteName))
-	aead, err := cp.NewX(mac.Sum(nil))
+	aead, err := journal.CreateAEAD(cfg.License, cfg.SiteID, cfg.SiteName)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not setup aead: %v", err)
 	}
 
 	type modeT int

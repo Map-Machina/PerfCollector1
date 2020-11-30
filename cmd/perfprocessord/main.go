@@ -52,13 +52,9 @@ func (p *PerfCtl) register(address string, s *session) error {
 	log.Tracef("register: %v", address)
 	defer log.Tracef("register exit: %v ", address)
 
-	p.Lock()
-	defer p.Unlock()
-
-	if _, ok := p.sessions[address]; ok {
+	if _, loaded := p.sessions.LoadOrStore(address, s); !loaded {
 		return fmt.Errorf("session already registered: %v", address)
 	}
-	p.sessions[address] = s
 
 	return nil
 }
@@ -67,13 +63,13 @@ func (p *PerfCtl) unregister(address string) error {
 	log.Tracef("unregister: %v", address)
 	defer log.Tracef("unregister exit: %v ", address)
 
-	p.Lock()
-	defer p.Unlock()
-
-	if s, ok := p.sessions[address]; ok {
+	if ss, loaded := p.sessions.LoadAndDelete(address); loaded {
+		s, ok := ss.(*session)
+		if !ok {
+			return fmt.Errorf("session invalid type: %T", ss)
+		}
 		s.conn.Close()
 		s.channel.Close()
-		delete(p.sessions, address)
 	} else {
 		return fmt.Errorf("session not registered: %v", address)
 	}
@@ -85,19 +81,22 @@ func (p *PerfCtl) unregisterAll() {
 	log.Tracef("unregisterAll")
 	defer log.Tracef("unregisterAll exit")
 
-	p.Lock()
-	defer p.Unlock()
-
-	for k, v := range p.sessions {
-		v.conn.Close()
-		v.channel.Close()
-		delete(p.sessions, k)
-	}
+	p.sessions.Range(func(key, value interface{}) bool {
+		s, ok := value.(*session)
+		if !ok {
+			log.Errorf("unregisterAll session invalid type: %T",
+				value)
+			return true
+		}
+		s.conn.Close()
+		s.channel.Close()
+		p.sessions.Delete(key)
+		return true
+	})
 }
 
 type PerfCtl struct {
-	sync.RWMutex
-	sessions map[string]*session // Mutex is only for map insert/delete.
+	sessions *sync.Map
 
 	cfg *config
 
@@ -114,7 +113,7 @@ func (p *PerfCtl) send(s *session, cmd types.PCCommand, callback chan interface{
 	s.Lock()
 	tag := s.tag
 	if _, ok := s.tags[tag]; ok {
-		p.Unlock()
+		s.Unlock()
 		return fmt.Errorf("duplicate tag: %v", tag)
 	}
 	s.tags[tag] = callback
@@ -498,31 +497,11 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, h HostIdentifie
 			return err
 		}
 
-		pr, err := p.ping()
+		pr, err := p.socketPrepareReply(filename)
 		if err != nil {
 			return err
 		}
 		spew.Dump(pr)
-
-		// Verify this is a journal file.
-		aead, err := journal.CreateAEAD(p.cfg.License, p.cfg.SiteID,
-			p.cfg.SiteName)
-		if err != nil {
-			return fmt.Errorf("could not setup aead: %v", err)
-		}
-		err = journal.IsJournalFile(filename, aead)
-		if err != nil {
-			return err
-		}
-		_, err = p.sendAndWait(ctx, s, types.PCCommand{
-			Cmd: types.PCPrepareReplayCmd,
-			Payload: types.PCPrepareReplay{
-				Frequency: 5 * time.Second,
-			},
-		})
-		if err != nil {
-			return err
-		}
 
 	case "once":
 		systems, err := util.ArgAsStringSlice("systems", a)
@@ -1031,6 +1010,43 @@ func (p *PerfCtl) handlePing(ping socketapi.SocketCommandPing) socketapi.SocketC
 	return socketapi.SocketCommandPingReply{Timestamp: time.Now().Unix()}
 }
 
+func (p *PerfCtl) handlePrepareReplay(ctx context.Context, pr socketapi.SocketCommandPrepareReplay) socketapi.SocketCommandPrepareReplayReply {
+	var reply socketapi.SocketCommandPrepareReplayReply
+	// Verify this is a journal file.
+	err := journal.IsJournalFile(pr.Filename, p.cfg.aead)
+	if err != nil {
+		reply.Error = append(reply.Error, err)
+		return reply
+	}
+
+	// Assume all sessions will remain online during command
+	s := make([]*session, 0, 16)
+	p.sessions.Range(func(key, value interface{}) bool {
+		ss, ok := value.(*session)
+		if !ok {
+			log.Errorf("handlePrepareReplay session invalid "+
+				"type: %T", value)
+			return true
+		}
+		s = append(s, ss)
+		return true
+	})
+
+	for k := range s {
+		log.Errorf("session: %v", k)
+		_, err = p.sendAndWait(ctx, s[k], types.PCCommand{
+			Cmd: types.PCPrepareReplayCmd,
+			Payload: types.PCPrepareReplay{
+				Frequency: 5 * time.Second,
+			},
+		})
+		if err != nil {
+			reply.Error = append(reply.Error, err)
+		}
+	}
+	return reply
+}
+
 func (p *PerfCtl) socketHandler(ctx context.Context, c net.Conn) {
 	log.Tracef("socketHandler")
 	defer log.Tracef("socketHandler exit")
@@ -1055,7 +1071,7 @@ func (p *PerfCtl) socketHandler(ctx context.Context, c net.Conn) {
 			return
 		}
 
-		log.Debugf("command: %v", sc)
+		log.Tracef("socketHandler command: %v", sc)
 
 		je := gob.NewEncoder(c) // prepare reply writer
 		var reply interface{}
@@ -1063,25 +1079,40 @@ func (p *PerfCtl) socketHandler(ctx context.Context, c net.Conn) {
 		// Read expected command
 		switch sc.Command {
 		case socketapi.SCPing:
-			var jp socketapi.SocketCommandPing
-			err := jr.Decode(&jp)
+			var gp socketapi.SocketCommandPing
+			err := jr.Decode(&gp)
 			if err != nil {
 				// abort on any error
 				log.Debugf("SocketCommandPing: %v", err)
 				return
 			}
-			log.Debugf("SocketCommandPing: %v", jp.Timestamp)
+			log.Debugf("SocketCommandPing: %v", gp.Timestamp)
 
 			// write reply
-			reply = p.handlePing(jp)
+			reply = p.handlePing(gp)
+
+		case socketapi.SCPrepareReplay:
+			var pr socketapi.SocketCommandPrepareReplay
+			err := jr.Decode(&pr)
+			if err != nil {
+				// abort on any error
+				log.Debugf("SocketCommandPrepareReplay: %v",
+					err)
+				return
+			}
+			log.Debugf("SocketCommandPrepareReplay: %v",
+				pr.Filename)
+
+			// write reply
+			reply = p.handlePrepareReplay(ctx, pr)
 
 		default:
-			log.Errorf("invalid command: %v", sc.Command)
+			log.Errorf("invalid socket command: %v", sc.Command)
 			return
 		}
 
 		// write reply
-		log.Debugf("reply:%v", spew.Sdump(reply))
+		log.Tracef("reply:%v", spew.Sdump(reply))
 		err = je.Encode(reply)
 		if err != nil {
 			log.Errorf("Encode: %v", err)
@@ -1102,7 +1133,7 @@ func (p *PerfCtl) listenSocket(ctx context.Context) error {
 		for {
 			conn, err := p.socket.Accept()
 			if err != nil {
-				log.Debugf("accept: %v", err)
+				log.Errorf("listenSocket accept: %v", err)
 				return
 			}
 			go p.socketHandler(ctx, conn)
@@ -1127,7 +1158,7 @@ func _main() error {
 
 	p := &PerfCtl{
 		cfg:      loadedCfg,
-		sessions: make(map[string]*session),
+		sessions: new(sync.Map), //make(map[string]*session),
 	}
 
 	// Execute, this needs to come out

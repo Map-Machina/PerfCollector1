@@ -46,3 +46,38 @@ func (p *PerfCtl) ping() (*socketapi.SocketCommandPingReply, error) {
 
 	return &pr, nil
 }
+
+func (p *PerfCtl) socketPrepareReply(filename string) (*socketapi.SocketCommandPrepareReplayReply, error) {
+	c, err := p.socketDial()
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+
+	// send identifier
+	ge := gob.NewEncoder(c)
+	err = ge.Encode(socketapi.SocketCommandID{
+		Version: socketapi.SCVersion,
+		Command: socketapi.SCPrepareReplay,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = ge.Encode(socketapi.SocketCommandPrepareReplay{
+		Filename: filename,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// read reply
+	gd := gob.NewDecoder(c)
+	var pr socketapi.SocketCommandPrepareReplayReply
+	err = gd.Decode(&pr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pr, nil
+}

@@ -132,3 +132,20 @@ func CreateAEAD(license, siteID, siteName string) (cipher.AEAD, error) {
 	mac.Write([]byte(siteName))
 	return cp.NewX(mac.Sum(nil))
 }
+
+// IsJournalFile opens an encrypted journal and verifies it is indeed a journal
+// file.
+func IsJournalFile(filename string, aead cipher.AEAD) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Read first entry
+	_, err = ReadEncryptedJournalEntry(f, aead)
+	if err != nil {
+		return fmt.Errorf("not a journal file: %v", err)
+	}
+	return nil
+}

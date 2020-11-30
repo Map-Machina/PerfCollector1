@@ -21,8 +21,8 @@ const (
 	PCCollectDirectoriesReplyCmd = "collectdirectoriesreply" // Reply to collectdirectories
 	PCStatusCollectionCmd        = "statuscollection"        // Collection status
 	PCStatusCollectionReplyCmd   = "statuscollectionreply"   // Collection status reply
-	PCStartReplayCmd             = "startreplay"             // Start replay
-	PCStartReplayReplyCmd        = "startreplayreply"        // Start replay reply
+	PCPrepareReplayCmd           = "preparereplay"           // Prepare replay
+	PCPrepareReplayReplyCmd      = "preparereplayreply"      // Prepare replay reply
 
 	// Commands that do not have a reply.
 	PCStartCollectionCmd = "startcollection" // Start collecting measurements
@@ -74,15 +74,15 @@ type PCStartCollection struct {
 	QueueDepth int           // Max measurements before spilling
 }
 
-// PCStartReplay instructs the collector to start replaying a load that is
+// PCPrepareReplay instructs the collector to start replaying a load that is
 // coming in over the sink channel.
-type PCStartReplay struct {
+type PCPrepareReplay struct {
 	Systems   []string      // Systems that will be exercised
 	Frequency time.Duration // Speed at which the sync will be fed
 }
 
-// PCStartReplayReply returns the training data.
-type PCStartReplayReply struct {
+// PCPrepareReplayReply returns the training data.
+type PCPrepareReplayReply struct {
 	Training map[int]int // Training data in 10% increments
 }
 
@@ -137,6 +137,6 @@ func init() {
 	gob.Register(PCCollectDirectoriesReply{})
 	gob.Register(PCStartCollection{})
 	gob.Register(PCStatusCollectionReply{})
-	gob.Register(PCStartReplay{})
-	gob.Register(PCStartReplayReply{})
+	gob.Register(PCPrepareReplay{})
+	gob.Register(PCPrepareReplayReply{})
 }

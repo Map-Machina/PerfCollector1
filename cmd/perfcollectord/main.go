@@ -425,11 +425,11 @@ func (p *PerfCollector) handleStopCollection(ctx context.Context, cmd types.PCCo
 	return types.Encode(reply)
 }
 
-func (p *PerfCollector) handleStartReplay(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
-	log.Tracef("handleStartReplay %v", cmd.Cmd)
-	defer log.Tracef("handleStartReplay %v exit", cmd.Cmd)
+func (p *PerfCollector) handlePrepareReplay(ctx context.Context, cmd types.PCCommand, channel ssh.Channel) ([]byte, error) {
+	log.Tracef("handlePrepareReplay %v", cmd.Cmd)
+	defer log.Tracef("handlePrepareReplay %v exit", cmd.Cmd)
 
-	sr, ok := cmd.Payload.(types.PCStartReplay)
+	sr, ok := cmd.Payload.(types.PCPrepareReplay)
 	if !ok {
 		return protocolError(cmd.Tag, "command type "+
 			"assertion error %v, %T", cmd.Cmd, sr)
@@ -476,8 +476,8 @@ func (p *PerfCollector) handleStartReplay(ctx context.Context, cmd types.PCComma
 	reply := types.PCCommand{
 		Version: types.PCVersion,
 		Tag:     cmd.Tag,
-		Cmd:     types.PCStartReplayReplyCmd,
-		Payload: types.PCStartReplayReply{
+		Cmd:     types.PCPrepareReplayReplyCmd,
+		Payload: types.PCPrepareReplayReply{
 			Training: trainingData,
 		},
 	}
@@ -673,8 +673,8 @@ func (p *PerfCollector) oobHandler(ctx context.Context, channel ssh.Channel, req
 		case types.PCStopCollectionCmd:
 			reply, err = p.handleStopCollection(ctx, cmd, channel)
 
-		case types.PCStartReplayCmd:
-			reply, err = p.handleStartReplay(ctx, cmd, channel)
+		case types.PCPrepareReplayCmd:
+			reply, err = p.handlePrepareReplay(ctx, cmd, channel)
 
 		default:
 			reply, err = protocolError(cmd.Tag, "unknown OOB "+

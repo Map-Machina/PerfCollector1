@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	ch "github.com/businessperformancetuning/perfcollector/channel"
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
+	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/socketapi"
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/database/postgres"
 	"github.com/businessperformancetuning/perfcollector/parser"
@@ -98,6 +100,8 @@ type PerfCtl struct {
 	sessions map[string]*session // Mutex is only for map insert/delete.
 
 	cfg *config
+
+	socket net.Listener // UNIX socket
 
 	db database.Database
 }
@@ -256,8 +260,8 @@ func (p *PerfCtl) oobHandler(s *session) error {
 					s.address, cmd.Payload)
 			}
 
-		case types.PCStartReplayReplyCmd:
-			rr, ok := cmd.Payload.(types.PCStartReplayReply)
+		case types.PCPrepareReplayReplyCmd:
+			rr, ok := cmd.Payload.(types.PCPrepareReplayReply)
 			if ok {
 				reply = rr
 			} else {
@@ -493,10 +497,26 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, h HostIdentifie
 		if err != nil {
 			return err
 		}
-		_ = filename
+
+		pr, err := p.ping()
+		if err != nil {
+			return err
+		}
+		spew.Dump(pr)
+
+		// Verify this is a journal file.
+		aead, err := journal.CreateAEAD(p.cfg.License, p.cfg.SiteID,
+			p.cfg.SiteName)
+		if err != nil {
+			return fmt.Errorf("could not setup aead: %v", err)
+		}
+		err = journal.IsJournalFile(filename, aead)
+		if err != nil {
+			return err
+		}
 		_, err = p.sendAndWait(ctx, s, types.PCCommand{
-			Cmd: types.PCStartReplayCmd,
-			Payload: types.PCStartReplay{
+			Cmd: types.PCPrepareReplayCmd,
+			Payload: types.PCPrepareReplay{
 				Frequency: 5 * time.Second,
 			},
 		})
@@ -1007,6 +1027,91 @@ func (p *PerfCtl) sink(ctx context.Context, site, host uint64, address string) e
 	return nil
 }
 
+func (p *PerfCtl) handlePing(ping socketapi.SocketCommandPing) socketapi.SocketCommandPingReply {
+	return socketapi.SocketCommandPingReply{Timestamp: time.Now().Unix()}
+}
+
+func (p *PerfCtl) socketHandler(ctx context.Context, c net.Conn) {
+	log.Tracef("socketHandler")
+	defer log.Tracef("socketHandler exit")
+	defer c.Close()
+	jr := gob.NewDecoder(c)
+	for {
+		var sc socketapi.SocketCommandID
+		err := jr.Decode(&sc)
+		if err != nil {
+			// abort on any error
+			if err != io.EOF {
+				log.Errorf("gob.Decode: %v", err)
+			}
+			return
+		}
+
+		// Read SocketCommandID
+		if sc.Version != socketapi.SCVersion {
+			log.Errorf("invalid socket protocol version: "+
+				"want %v got %v", socketapi.SCVersion,
+				sc.Version)
+			return
+		}
+
+		log.Debugf("command: %v", sc)
+
+		je := gob.NewEncoder(c) // prepare reply writer
+		var reply interface{}
+
+		// Read expected command
+		switch sc.Command {
+		case socketapi.SCPing:
+			var jp socketapi.SocketCommandPing
+			err := jr.Decode(&jp)
+			if err != nil {
+				// abort on any error
+				log.Debugf("SocketCommandPing: %v", err)
+				return
+			}
+			log.Debugf("SocketCommandPing: %v", jp.Timestamp)
+
+			// write reply
+			reply = p.handlePing(jp)
+
+		default:
+			log.Errorf("invalid command: %v", sc.Command)
+			return
+		}
+
+		// write reply
+		log.Debugf("reply:%v", spew.Sdump(reply))
+		err = je.Encode(reply)
+		if err != nil {
+			log.Errorf("Encode: %v", err)
+			return
+		}
+	}
+}
+
+func (p *PerfCtl) listenSocket(ctx context.Context) error {
+	var err error
+	p.socket, err = net.Listen("unix", p.cfg.SocketFilename)
+	if err != nil {
+		return err
+	}
+	log.Infof("UNIX socket listening on: %v", p.cfg.SocketFilename)
+
+	go func() {
+		for {
+			conn, err := p.socket.Accept()
+			if err != nil {
+				log.Debugf("accept: %v", err)
+				return
+			}
+			go p.socketHandler(ctx, conn)
+		}
+	}()
+
+	return nil
+}
+
 func _main() error {
 	// Load configuration and parse command line.  This function also
 	// initializes logging and configures it accordingly.
@@ -1067,6 +1172,17 @@ func _main() error {
 
 	// Context.
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Setup unix domain socket
+	err = os.RemoveAll(filepath.Join(p.cfg.HomeDir,
+		socketapi.SocketFilename))
+	if err != nil {
+		return err
+	}
+	err = p.listenSocket(ctx)
+	if err != nil {
+		return err
+	}
 
 	var eg errgroup.Group
 	for k := range p.cfg.HostsId {

@@ -10,6 +10,7 @@ const (
 	DefaultConfigFilename  = "perfprocessord.conf"
 	DefaultDataDirname     = "data"
 	DefaultJournalFilename = "journal"
+	DefaultSocketFilename  = ".socket"
 )
 
 var (
@@ -21,4 +22,7 @@ var (
 
 	// DefaultDataDir points to perfcollectord daemon default data directory.
 	DefaultDataDir = filepath.Join(DefaultHomeDir, DefaultDataDirname)
+
+	// DefaultSocket points to perfcollectord default socket filename.
+	DefaultSocketFile = filepath.Join(DefaultHomeDir, DefaultSocketFilename)
 )

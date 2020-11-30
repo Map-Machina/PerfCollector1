@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	defaultLogLevel    = "info"
-	defaultLogDirname  = "logs"
-	defaultLogFilename = "perfprocessord.log"
+	defaultLogLevel       = "info"
+	defaultLogDirname     = "logs"
+	defaultLogFilename    = "perfprocessord.log"
+	defaultSocketFilename = sharedconfig.DefaultSocketFilename
 )
 
 var (
@@ -66,6 +67,9 @@ type config struct {
 	Version     string
 	SSHKeyFile  string   `long:"sshid" description:"File containing the ssh identity"`
 	Hosts       []string `long:"hosts" description:"Add perfcollector host <siteid:hostid/ip:port>"`
+
+	// Socket
+	SocketFilename string `long:"socket" description:"Socket filename"`
 
 	// Database
 	DBURI    string `long:"dburi" description:"Database URI"`
@@ -288,14 +292,15 @@ func getAllMacs() ([]string, error) {
 func loadConfig() (*config, []string, error) {
 	// Default config.
 	cfg := config{
-		HomeDir:    sharedconfig.DefaultHomeDir,
-		ConfigFile: sharedconfig.DefaultConfigFile,
-		DebugLevel: defaultLogLevel,
-		DataDir:    sharedconfig.DefaultDataDir,
-		LogDir:     defaultLogDir,
-		SSHKeyFile: defaultSSHKeyFile,
-		Version:    version(),
-		HostsId:    make(map[string]HostIdentifier),
+		HomeDir:        sharedconfig.DefaultHomeDir,
+		ConfigFile:     sharedconfig.DefaultConfigFile,
+		DebugLevel:     defaultLogLevel,
+		DataDir:        sharedconfig.DefaultDataDir,
+		SocketFilename: sharedconfig.DefaultSocketFile,
+		LogDir:         defaultLogDir,
+		SSHKeyFile:     defaultSSHKeyFile,
+		Version:        version(),
+		HostsId:        make(map[string]HostIdentifier),
 	}
 
 	// Service options which are only added on Windows.
@@ -360,6 +365,12 @@ func loadConfig() (*config, []string, error) {
 			cfg.LogDir = filepath.Join(cfg.HomeDir, defaultLogDirname)
 		} else {
 			cfg.LogDir = preCfg.LogDir
+		}
+		if preCfg.SocketFilename == defaultSocketFilename {
+			cfg.SocketFilename = filepath.Join(cfg.HomeDir,
+				defaultSocketFilename)
+		} else {
+			cfg.SocketFilename = preCfg.SocketFilename
 		}
 	}
 

@@ -83,7 +83,7 @@ type config struct {
 	aead            cipher.AEAD // journal encryption cipher
 
 	// License
-	SiteID   string `long:"siteid" description:"Site identifier"`
+	SiteID   uint64 `long:"siteid" description:"Site identifier"`
 	SiteName string `long:"sitename" description:"Site name"`
 	License  string `long:"license" description:"License"`
 	license  *license.LicenseKey
@@ -509,15 +509,13 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// Deal with license.
-	if cfg.SiteID == "" || cfg.SiteName == "" || cfg.License == "" {
+	if cfg.SiteID == 0 || cfg.SiteName == "" || cfg.License == "" {
 		return nil, nil, fmt.Errorf("Must provide: siteid, sitename " +
 			"and license")
 	}
-	expectedSiteID, err := strconv.ParseUint(cfg.SiteID, 10, 64)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid siteid: %v", err)
-	}
-	l, err := license.NewFromStrings(cfg.SiteID, cfg.SiteName)
+	expectedSiteID := cfg.SiteID
+	l, err := license.NewFromStrings(strconv.FormatUint(cfg.SiteID, 10),
+		cfg.SiteName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not create license key: %v",
 			err)
@@ -551,7 +549,7 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// Generate journal key from license material.
-	cfg.aead, err = journal.CreateAEAD(cfg.License, cfg.SiteID, cfg.SiteName)
+	cfg.aead, err = journal.CreateAEAD(cfg.SiteID, cfg.License, cfg.SiteName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not setup aead: %v", err)
 	}

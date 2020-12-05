@@ -14,14 +14,15 @@ import (
 	"time"
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
+	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
 )
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("perfjournal", false)
-	defaultConfigFile = filepath.Join(defaultHomeDir, "perfjournal.conf")
+	defaultHomeDir    = dcrutil.AppDataDir("perfreplay", false)
+	defaultConfigFile = filepath.Join(defaultHomeDir, "perfreplay.conf")
 )
 
 func versionString() string {
@@ -32,25 +33,24 @@ type config struct {
 	Config      flag.Value
 	ShowVersion bool
 	Verbose     bool
-	SiteID      uint64
-	Mode        string
 	Cache       string
 	SiteName    string
 	License     string
 	InputFile   string
 	Output      string
+	Site        uint64
+	Host        uint64
+	Run         uint64
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `Usage of perfjournal:
-  perfjournal [flags] action <args...>
+	fmt.Fprintf(os.Stderr, `Usage of perfreplay:
+  perfreplay [flags] action <args...>
 Flags:
   -C value
         config file
   -v    verbose
   -V	Show version and exit
-  --mode string
-	Output mode: csv, json (default csv)
   --cache string
 	filename of JSON file that caching data.
   --siteid unsigned integer
@@ -61,29 +61,33 @@ Flags:
         License string, e.g. "6f37-6904-1f83-92f4-595a-0efd"
   --cache JSON
 	JSON file that will cache values. This is used to create caches such as the NIC speed.
+  --host unsigned integer
+	Host ID that is being replayed.
+  --run unsigned integer
+	Run ID that is being replayed.
   --input string
-	Input directory, e.g. ~/journal
+	Input file, e.g. ~/journal
   --output string
-	Output file or directory depending on mode, - outputs to stdout in JSON mode
-	e.g. ~/datadump.csv or ~/journal.json
+	Output file, e.g. ~/replay.json
 `)
 	os.Exit(2)
 }
 
 func (c *config) FlagSet() *flag.FlagSet {
-	fs := flag.NewFlagSet("perfjournal", flag.ExitOnError)
+	fs := flag.NewFlagSet("perfreplay", flag.ExitOnError)
 	configParser := flagfile.Parser{AllowUnknown: false}
 	c.Config = configParser.ConfigFlag(fs)
 	fs.Var(c.Config, "C", "config file")
 	fs.BoolVar(&c.ShowVersion, "V", false, "")
 	fs.BoolVar(&c.Verbose, "v", false, "")
-	fs.Uint64Var(&c.SiteID, "siteid", 0, "")
-	fs.StringVar(&c.Mode, "mode", "csv", "")
 	fs.StringVar(&c.Cache, "cache", "", "")
 	fs.StringVar(&c.SiteName, "sitename", "", "")
 	fs.StringVar(&c.License, "license", "", "")
 	fs.StringVar(&c.InputFile, "input", "", "")
 	fs.StringVar(&c.Output, "output", "", "")
+	fs.Uint64Var(&c.Site, "siteid", 0, "")
+	fs.Uint64Var(&c.Host, "host", 0, "")
+	fs.Uint64Var(&c.Run, "run", 0, "")
 	fs.Usage = usage
 	return fs
 }
@@ -167,7 +171,7 @@ func loadConfig() (*config, []string, error) {
 		os.Exit(0)
 	}
 
-	if cfg.SiteID == 0 {
+	if cfg.Site == 0 {
 		fmt.Fprintln(os.Stderr, "Must provide --siteid")
 		os.Exit(1)
 	}
@@ -204,32 +208,120 @@ func loadConfig() (*config, []string, error) {
 var (
 	// map key site_host_run_system
 	previousCache = make(map[string]*journal.WrapPCCollection)
-
-	// map key is filename
-	fileCache = make(map[string]*os.File)
 )
 
-func constructHeader(wc *journal.WrapPCCollection) (string, error) {
-	var mHdr string
-	switch wc.Measurement.System {
-	case "/proc/stat":
-		mHdr = "CPU,%usr,%nice,%system,%iowait,%steal,%idle"
-	case "/proc/meminfo":
-		mHdr = "kbmemfree,kbavail,kbmemused,%memused,kbbuffers," +
-			"kbcached,kbcommit,%commit,kbactive,kbinact," +
-			"kbdirty"
-	case "/proc/net/dev":
-		mHdr = "IFACE,rxpck/s,txpck/s,rxkB/s,txkB/s,rxcmp/s," +
-			"txcmp/s,rxmcst/s,%ifutil"
-	case "/proc/diskstats":
-		mHdr = "DEV,tps,rtps,wtps,dtps,bread/s,bwrtn/s,bdscd/s"
-	case "/proc/loadavg":
-		// XXX do notthing
-	default:
-		return "", fmt.Errorf("unsupported system: %v",
-			wc.Measurement.System)
+func parse(cfg *config, cur *journal.WrapPCCollection, cache map[string]parser.NIC) (interface{}, error) {
+	if cur.Site != cfg.Site {
+		// File should not have decrypted
+		return nil, fmt.Errorf("unexpected site: %v", cur.Site)
 	}
-	return "#site,host,timestamp," + mHdr, nil
+
+	// Work around trailing /
+	cur.Measurement.System = strings.TrimRight(cur.Measurement.System, "/")
+
+	// Ignore loadavg for now
+	if cur.Measurement.System == "/proc/loadavg" {
+		return nil, nil
+	}
+
+	// Construct previousCache map key
+	name := strconv.FormatUint(cur.Site, 10) + "_" +
+		strconv.FormatUint(cur.Host, 10) + "_" +
+		strconv.FormatUint(cur.Run, 10) + "_" +
+		cur.Measurement.System
+	var (
+		prev *journal.WrapPCCollection
+		ok   bool
+	)
+	if prev, ok = previousCache[name]; !ok {
+		// Store as previous measurement.
+		previousCache[name] = cur
+		return nil, nil
+	}
+
+	var record interface{}
+	switch cur.Measurement.System {
+	case "/proc/stat":
+		p, err := parser.ProcessStat([]byte(prev.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessStat prev: %v", err)
+		}
+		c, err := parser.ProcessStat([]byte(cur.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessStat cur: %v", err)
+		}
+		// Ignore database bits
+		record, err = parser.CubeStat(0, 0, 0, 0, &p, &c)
+		if err != nil {
+			return nil, fmt.Errorf("CubeStat: %v", err)
+		}
+
+		// Store cur into previousCache
+		previousCache[name] = cur
+
+	case "/proc/meminfo":
+		// MemInfo isn't differential so just toss first measurement.
+		c, err := parser.ProcessMeminfo([]byte(cur.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessMeminfo cur: %v", err)
+		}
+		// Ignore database bits
+		record, err = parser.CubeMeminfo(0, 0, 0, 0, &c)
+		if err != nil {
+			return nil, fmt.Errorf("CubeMeminfo: %v", err)
+		}
+
+	case "/proc/net/dev":
+		p, err := parser.ProcessNetDev([]byte(prev.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessNetDev prev: %v", err)
+		}
+		c, err := parser.ProcessNetDev([]byte(cur.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessNetDev cur: %v", err)
+		}
+		// Ignore database bits
+		tvi := uint64(cur.Measurement.Frequency.Seconds()) *
+			parser.UserHZ
+
+		// XXX there is no nic cache here, fix
+		record, err = parser.CubeNetDev(cur.Site, cur.Host, cur.Run,
+			0, /* timestamp */
+			0, /* start */
+			0, /* duration */
+			p, c, tvi, cache)
+		if err != nil {
+			return nil, fmt.Errorf("CubeNetDev: %v", err)
+		}
+
+		// Store cur into previousCache
+		previousCache[name] = cur
+
+	case "/proc/diskstats":
+		p, err := parser.ProcessDiskstats([]byte(prev.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessDiskstats prev: %v", err)
+		}
+		c, err := parser.ProcessDiskstats([]byte(cur.Measurement.Measurement))
+		if err != nil {
+			return nil, fmt.Errorf("ProcessDiskstats cur: %v", err)
+		}
+		// Ignore database bits
+		tvi := uint64(cur.Measurement.Frequency.Seconds()) *
+			parser.UserHZ
+		// XXX there is no nic cache here, fix
+		record, err = parser.CubeDiskstats(0, 0, 0, 0, p, c, tvi)
+		if err != nil {
+			return nil, fmt.Errorf("CubeDiskstats: %v", err)
+		}
+
+		// Store cur into previousCache
+		previousCache[name] = cur
+
+	default:
+	}
+
+	return record, nil
 }
 
 var (
@@ -308,200 +400,6 @@ func createNetCache(cache map[string]string) (map[string]parser.NIC, error) {
 	return r, nil
 }
 
-func csv(cfg *config, cur *journal.WrapPCCollection, cache map[string]parser.NIC) error {
-	if cur.Site != cfg.SiteID {
-		// File should not have decrypted
-		return fmt.Errorf("unexpected site: %v", cur.Site)
-	}
-
-	// XXX work around trailing /
-	// XXX FIXME
-	if cur.Measurement.System == "/proc/net/dev/" {
-		cur.Measurement.System = "/proc/net/dev"
-	}
-	if cur.Measurement.System == "/proc/loadavg" {
-		return nil
-	}
-
-	// Construct previousCache map key
-	name := strconv.FormatUint(cur.Site, 10) + "_" +
-		strconv.FormatUint(cur.Host, 10) + "_" +
-		strconv.FormatUint(cur.Run, 10) + "_" +
-		cur.Measurement.System
-	var (
-		prev *journal.WrapPCCollection
-		ok   bool
-	)
-	if prev, ok = previousCache[name]; !ok {
-		// Store as previous measurement.
-		previousCache[name] = cur
-		return nil
-	}
-
-	var (
-		f *os.File
-	)
-	filename := filepath.Join(cfg.Output, cur.Measurement.System)
-	if f, ok = fileCache[filename]; !ok {
-		// File not seen, create file, write header and cache
-
-		// Create dirs.
-		dir := filepath.Join(cfg.Output,
-			filepath.Dir(cur.Measurement.System))
-		err := os.MkdirAll(dir, 0754)
-		if err != nil {
-			return err
-		}
-
-		// Overwrite old files.
-		file := filepath.Join(cfg.Output, cur.Measurement.System)
-		if cfg.Verbose {
-			fmt.Printf("open %v\n", file)
-		}
-		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY|os.O_CREATE|
-			os.O_TRUNC, 0644)
-		if err != nil {
-			return err
-		}
-		fileCache[file] = f
-
-		// Fetch header
-		header, err := constructHeader(cur)
-		if err != nil {
-			return err
-		}
-
-		_, err = fmt.Fprintf(f, "%v\n", header)
-		return err
-	}
-
-	switch cur.Measurement.System {
-	case "/proc/stat":
-		p, err := parser.ProcessStat([]byte(prev.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessStat prev: %v", err)
-		}
-		c, err := parser.ProcessStat([]byte(cur.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessStat cur: %v", err)
-		}
-		// Ignore database bits
-		r, err := parser.CubeStat(0, 0, 0, 0, &p, &c)
-		if err != nil {
-			return fmt.Errorf("CubeStat: %v", err)
-		}
-
-		// Write out records
-		for k := range r {
-			fmt.Fprintf(f, "%v,%v,%v,%v,%v,%v,%v,%v,%v,%v\n",
-				cur.Site, cur.Host, cur.Measurement.Timestamp.Unix(),
-				r[k].CPU, r[k].UserT, r[k].Nice, r[k].System,
-				r[k].IOWait, r[k].Steal, r[k].Idle)
-		}
-
-		// Store cur into previousCache
-		previousCache[name] = cur
-
-	case "/proc/meminfo":
-		// MemInfo isn't differential so just toss first measurement.
-		c, err := parser.ProcessMeminfo([]byte(cur.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessMeminfo cur: %v", err)
-		}
-		// Ignore database bits
-		r, err := parser.CubeMeminfo(0, 0, 0, 0, &c)
-		if err != nil {
-			return fmt.Errorf("CubeMeminfo: %v", err)
-		}
-
-		// Write out records
-		fmt.Fprintf(f, "%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v\n",
-			cur.Site, cur.Host, cur.Measurement.Timestamp.Unix(),
-			r.MemFree, r.MemAvailable, r.MemUsed, r.PercentUsed,
-			r.Buffers, r.Cached, r.Commit, r.PercentCommit,
-			r.Active, r.Inactive, r.Dirty)
-
-	case "/proc/net/dev":
-		p, err := parser.ProcessNetDev([]byte(prev.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessNetDev prev: %v", err)
-		}
-		c, err := parser.ProcessNetDev([]byte(cur.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessNetDev cur: %v", err)
-		}
-		// Ignore database bits
-		tvi := uint64(cur.Measurement.Frequency.Seconds()) *
-			parser.UserHZ
-
-		// XXX there is no nic cache here, fix
-		r, err := parser.CubeNetDev(cur.Site, cur.Host, cur.Run,
-			0, /* timestamp */
-			0, /* start */
-			0, /* duration */
-			p, c, tvi, cache)
-		if err != nil {
-			return fmt.Errorf("CubeNetDev: %v", err)
-		}
-
-		// Write out records
-		for k := range r {
-			fmt.Fprintf(f, "%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v\n",
-				cur.Site, cur.Host, cur.Measurement.Timestamp.Unix(),
-				r[k].Name, r[k].RxPackets, r[k].TxPackets,
-				r[k].RxKBytes, r[k].TxKBytes, r[k].RxCompressed,
-				r[k].TxCompressed, r[k].RxMulticast, r[k].IfUtil)
-		}
-
-		// Store cur into previousCache
-		previousCache[name] = cur
-
-	case "/proc/diskstats":
-		p, err := parser.ProcessDiskstats([]byte(prev.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessDiskstats prev: %v", err)
-		}
-		c, err := parser.ProcessDiskstats([]byte(cur.Measurement.Measurement))
-		if err != nil {
-			return fmt.Errorf("ProcessDiskstats cur: %v", err)
-		}
-		// Ignore database bits
-		tvi := uint64(cur.Measurement.Frequency.Seconds()) *
-			parser.UserHZ
-		// XXX there is no nic cache here, fix
-		r, err := parser.CubeDiskstats(0, 0, 0, 0, p, c, tvi)
-		if err != nil {
-			return fmt.Errorf("CubeDiskstats: %v", err)
-		}
-
-		// Write out records
-		for k := range r {
-			fmt.Fprintf(f, "%v,%v,%v,%v,%v,%v,%v,%v,%v,%v,%v\n",
-				cur.Site, cur.Host, cur.Measurement.Timestamp.Unix(),
-				r[k].Name, r[k].Tps, r[k].Rtps, r[k].Wtps,
-				r[k].Dtps, r[k].Bread, r[k].Bwrtn, r[k].Bdscd)
-		}
-
-		// Store cur into previousCache
-		previousCache[name] = cur
-
-	default:
-	}
-
-	return nil
-}
-
-var jsonFile *os.File
-
-func doJSON(cfg *config, cur *journal.WrapPCCollection) error {
-	b, err := json.Marshal(cur)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(jsonFile, "%v\n", string(b))
-	return err
-}
-
 func readCache(filename string) (map[string]string, error) {
 	fc, err := os.Open(filename)
 	if err != nil {
@@ -531,6 +429,31 @@ func readCache(filename string) (map[string]string, error) {
 	return cache, nil
 }
 
+// min returns the smallest unsigned integer.
+func min(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// max returns the largest unsigned integer.
+func max(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// giveOrTake see if y is within percent of x.
+func giveOrTake(x, y, percent uint64) bool {
+	z := (min(x, y) * 100) / max(x, y)
+	if (100 - z) <= percent {
+		return true
+	}
+	return false
+}
+
 func _main() error {
 	cfg, _, err := loadConfig()
 	if err != nil {
@@ -539,36 +462,17 @@ func _main() error {
 
 	// Generate journal key from license material. There is no function for
 	// this in order to obfuscate this terrible trick.
-	aead, err := journal.CreateAEAD(cfg.SiteID, cfg.License, cfg.SiteName)
+	aead, err := journal.CreateAEAD(cfg.Site, cfg.License, cfg.SiteName)
 	if err != nil {
 		return fmt.Errorf("could not setup aead: %v", err)
 	}
 
-	type modeT int
-	const (
-		modeInvalid = 0
-		modeCSV     = 1
-		modeJSON    = 2
-	)
-	mode := modeInvalid
-
-	switch cfg.Mode {
-	case "csv":
-		mode = modeCSV
-	case "json":
-		mode = modeJSON
-	default:
-		return fmt.Errorf("invalid mode: %v", cfg.Mode)
+	// Open input file
+	f, err := os.Open(cfg.InputFile)
+	if err != nil {
+		return fmt.Errorf("input: %v", err)
 	}
 
-	if mode == modeCSV {
-		if !fileExists(cfg.Output) {
-			return fmt.Errorf("output dir does not exist: %v",
-				cfg.Output)
-		}
-	}
-
-	// Read cache, XXX this is meanigless in JSON mode
 	var netCache map[string]parser.NIC
 	if cfg.Cache != "" {
 		cache, err := readCache(cfg.Cache)
@@ -581,29 +485,9 @@ func _main() error {
 		}
 	}
 
-	// Open input file
-	f, err := os.Open(cfg.InputFile)
-	if err != nil {
-		return fmt.Errorf("input: %v", err)
-	}
-
-	// Pre-process
-	switch mode {
-	case modeJSON:
-		if cfg.Output == "-" {
-			jsonFile = os.Stdout
-		} else {
-			jsonFile, err = os.Create(cfg.Output)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	// Process
-	entries := 0
-	start := time.Now()
-	s := time.Now().Add(5 * time.Second)
+	// Detect how many systems we have to replay and at what frequency.
+	var freq time.Duration
+	seen := make(map[string]struct{}, 16)
 	for {
 		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
 		if err != nil {
@@ -613,40 +497,118 @@ func _main() error {
 			return err
 		}
 
-		switch mode {
-		case modeCSV:
-			if err != nil {
-				return fmt.Errorf("createCache: %v", err)
-			}
+		if wc.Site != cfg.Site || wc.Host != cfg.Host ||
+			wc.Run != cfg.Run {
+			continue
+		}
 
-			err = csv(cfg, wc, netCache)
-			if err != nil {
-				return err
-			}
+		freq = wc.Measurement.Frequency
+		if _, ok := seen[wc.Measurement.System]; ok {
+			break
+		}
+		seen[wc.Measurement.System] = struct{}{}
+	}
 
-		case modeJSON:
-			err = doJSON(cfg, wc)
-			if err != nil {
-				return err
+	// Rewind file
+	fs, err := f.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+	if fs != 0 {
+		return fmt.Errorf("Rewind failed: %v", fs)
+	}
+
+	// Process
+	entries := 0
+	recordCount := 0
+	primeCounter := 0
+
+	// Memory subsystem
+	var (
+		memoryLocation []byte // Mmap pointer
+		memorySize     uint64 // Cache value
+	)
+
+	start := time.Now()
+	for {
+		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
+		if err != nil {
+			if err == io.EOF {
+				break
 			}
+			return err
+		}
+
+		if wc.Site != cfg.Site || wc.Host != cfg.Host ||
+			wc.Run != cfg.Run {
+			continue
+		}
+
+		if primeCounter < len(seen) {
+			// First measurement is tossed since we need to prime
+			// the replay.
+			primeCounter++
+			fmt.Printf("primeCounter %v -> %T\n", primeCounter, wc)
+			continue
+		}
+
+		record, err := parse(cfg, wc, netCache)
+		if err != nil {
+			return err
+		}
+		if record == nil {
+			// Record was skipped for whatever reason.
+			continue
 		}
 
 		entries++
 
-		if cfg.Verbose && time.Now().After(s) {
-			fmt.Printf("Entries processed: %v\n", entries)
-			s = time.Now().Add(5 * time.Second)
+		fmt.Printf("got %T\n", record)
+		switch x := record.(type) {
+		case []database.Stat:
+			fmt.Printf("idle %v %v%%\n", x[0].CPU, x[0].Idle)
+		case *database.Meminfo:
+			// Only reallocate memory if the size differs by >10%.
+			// Painting memory is very expensive so try to avoid it
+			// in order to not contaminate CPU usage.
+			if !giveOrTake(x.MemUsed, memorySize, 10) {
+				fmt.Printf("Reallocate MemUsed: %v\n", x.MemUsed*1024)
+				// Free prior memory
+				if memoryLocation != nil {
+					err = munmap(memoryLocation)
+					if err != nil {
+						return fmt.Errorf("munmap: %v",
+							err)
+					}
+				}
+
+				// Allocate new size
+				memoryLocation, err = mmap(x.MemUsed * 1024)
+				if err != nil {
+					return fmt.Errorf("mmap: %v", err)
+				}
+				memorySize = x.MemUsed
+			}
+
+		case []database.NetDev:
+		case []database.Diskstat:
+			_ = x
+		default:
+			fmt.Printf("Unsuported record type: %T\n", record)
+			continue
 		}
+
+		recordCount++
+		if recordCount < len(seen) {
+			continue
+		}
+		recordCount = 0
+		fmt.Printf("load er up!! %v\n", entries)
+
+		time.Sleep(freq)
 	}
 
 	// Post process.
-	switch mode {
-	case modeCSV:
-		// Close all files in file cache.
-		for _, v := range fileCache {
-			v.Close()
-		}
-	}
 
 	if cfg.Verbose {
 		end := time.Now()

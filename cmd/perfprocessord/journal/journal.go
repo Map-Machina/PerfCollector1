@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/businessperformancetuning/perfcollector/types"
@@ -126,7 +127,8 @@ func ReadEncryptedJournalEntry(f *os.File, aead cipher.AEAD) (*WrapPCCollection,
 }
 
 // CreateAEAD returns an AEAD that is generated from a license.
-func CreateAEAD(license, siteID, siteName string) (cipher.AEAD, error) {
+func CreateAEAD(site uint64, license, siteName string) (cipher.AEAD, error) {
+	siteID := strconv.FormatUint(site, 10)
 	mac := hmac.New(sha256.New, []byte(license))
 	mac.Write([]byte(siteID))
 	mac.Write([]byte(siteName))

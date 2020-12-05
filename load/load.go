@@ -118,6 +118,10 @@ func user(percent float64, duration time.Duration) int {
 	return userLoops
 }
 
+func User(percent float64, duration time.Duration) int {
+	return user(percent, duration)
+}
+
 func systemLoad(duration time.Duration) (loops int) {
 	start := time.Now()
 	b := make([]byte, 16384)

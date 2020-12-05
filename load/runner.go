@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -199,30 +201,56 @@ func (w *Worker) train(cpuLoad float64) (int, error) {
 	return int(replayLoad), nil
 }
 
-func (w *Worker) Train() (map[int]int, error) {
+// Train returns units run for each 10 percentile.
+func (w *Worker) Train(verbose bool) (map[int]int, error) {
 	loadPercent := make(map[int]int) // [percent]load
-	for i := 1; i < 10; i++ {
-		load := 10.0 * float64(i)
-		percentage := load
-		margin := 0.05 // percent margin
-		idle := 100.0 - load
-		maxDiff := margin * idle
+
+	type margin struct {
+		low  float64
+		high float64
+	}
+	m := map[int]margin{
+		10: {low: 8, high: 12},
+		20: {low: 18, high: 22},
+		30: {low: 28, high: 32},
+		40: {low: 38, high: 42},
+		50: {low: 48, high: 52},
+		60: {low: 58, high: 62},
+		70: {low: 68, high: 72},
+		80: {low: 78, high: 82},
+		90: {low: 88, high: 92},
+	}
+
+	// Sort for user pleasure
+	keys := make([]int, len(m))
+	i := 0
+	for k := range m {
+		keys[i] = k
+		i++
+	}
+	sort.Ints(keys)
+
+	for _, k := range keys {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "=== looking for %v ", k)
+		}
 
 		loadFound := false
-		//fmt.Printf("=== looking for %v\n", load)
-		for retry := 0; retry < 5; retry++ {
+		load := float64(k)
+		for retry := 0; retry < 10; retry++ {
 			// Start work
 			cs, err := CPUStat()
 			if err != nil {
 				return nil, err
 			}
-
 			x, err := w.train(load)
 			if err != nil {
 				var te trainError
 				if errors.As(err, &te) {
 					load--
-					//fmt.Printf("---%v\n", te)
+					if verbose {
+						fmt.Fprintf(os.Stderr, "^^ ", te)
+					}
 					continue
 				} else {
 					return nil, err
@@ -240,25 +268,38 @@ func (w *Worker) Train() (map[int]int, error) {
 				return nil, err
 			}
 
-			//fmt.Printf("%v < %v < %v\n", idle-maxDiff, s[0].Idle, idle+maxDiff)
-			if s[0].Idle > idle-maxDiff && s[0].Idle < idle+maxDiff {
-				//fmt.Printf("Within %v%% margin\n", margin*100)
+			busy := 100 - s[0].Idle
+			if verbose {
+				fmt.Fprintf(os.Stderr, "busy %.1f (load %v) ",
+					busy, load)
+			}
+			if busy > m[k].low && busy < m[k].high {
 				loadFound = true
-				loadPercent[int(percentage)] = x
+				loadPercent[k] = x
+				if verbose {
+					fmt.Fprintf(os.Stderr, "units %v\n", x)
+				}
 				break
 			} else {
-				// expected idle, got s[0].Idle
-				if s[0].Idle < idle-maxDiff {
+				if busy > m[k].high {
+					if verbose {
+						fmt.Fprintf(os.Stderr, "-- ")
+					}
 					load--
 				} else {
+					if verbose {
+						fmt.Fprintf(os.Stderr, "++ ")
+					}
 					load++
 				}
+				continue
 			}
 		}
 		if !loadFound {
-			return nil, fmt.Errorf("no load found within 5%%")
+			return nil, fmt.Errorf("no load found within margin")
 		}
 	}
+	loadPercent[100] = int(w.unitsPerSecond)
 
 	return loadPercent, nil
 }

@@ -30,11 +30,8 @@ type config struct {
 	Config      flag.Value
 	ShowVersion bool
 	Verbose     bool
-	SiteName    string
-	License     string
 	Site        uint64
 	Host        uint64
-	Run         uint64
 }
 
 func usage() {
@@ -48,14 +45,8 @@ Flags:
   -V	Show version and exit
   --siteid unsigned integer
 	Numerical site id, e.g. 1
-  --sitename string (optional)
-        Site name, e.g. "Evil Database Site"
-  --license string (optional)
-        License string, e.g. "6f37-6904-1f83-92f4-595a-0efd"
   --host unsigned integer
 	Host ID that is being measured.
-  --run unsigned integer (optional)
-	Run ID that is being replayed.
 `)
 	os.Exit(2)
 }
@@ -69,11 +60,8 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.Var(c.Config, "C", "config file")
 	fs.BoolVar(&c.ShowVersion, "V", false, "")
 	fs.BoolVar(&c.Verbose, "v", false, "")
-	fs.StringVar(&c.SiteName, "sitename", "", "")
-	fs.StringVar(&c.License, "license", "", "")
 	fs.Uint64Var(&c.Site, "siteid", 0, "")
 	fs.Uint64Var(&c.Host, "host", invalidHostID, "")
-	fs.Uint64Var(&c.Run, "run", 0, "")
 	fs.Usage = usage
 	return fs
 }
@@ -202,8 +190,10 @@ func _main() error {
 	je := json.NewEncoder(os.Stdout)
 	for _, k := range keys {
 		err = je.Encode(training.Training{
-			Busy:  uint(k),
-			Units: uint(measurement[k]),
+			Busy:   uint(k),
+			Units:  uint(measurement[k]),
+			SiteID: cfg.Site,
+			Host:   cfg.Host,
 		})
 		if err != nil {
 			return err

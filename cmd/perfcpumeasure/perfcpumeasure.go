@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("perfperfcpumeasure", false)
+	defaultHomeDir    = dcrutil.AppDataDir("perfcpumeasure", false)
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfcpumeasure.conf")
 )
 
@@ -35,8 +35,8 @@ type config struct {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `Usage of perfreplay:
-  perfreplay [flags] action <args...>
+	fmt.Fprintf(os.Stderr, `Usage of perfcpumeasure:
+  perfreplay [flags]
 Flags:
   -C value
         config file

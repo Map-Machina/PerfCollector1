@@ -506,7 +506,7 @@ func workerMem(ctx context.Context, wg *sync.WaitGroup, c chan *database.Meminfo
 				continue
 			}
 
-			log.Tracef("Reallocate MemUsed: %v\n", m.MemUsed*1024)
+			log.Tracef("reallocate MemUsed: %v\n", m.MemUsed*1024)
 			// Free prior memory
 			if memoryLocation != nil {
 				err = munmap(memoryLocation)
@@ -567,13 +567,35 @@ func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat)
 				busy = 100
 			}
 			units := int(td[int(busy)])
-			units /= numCores
-			log.Tracef("busy: %v units: %v", busy, units)
-			for i := 0; i < numCores; i++ {
+			if units == 0 {
+				// Nothing to do
+				log.Tracef("workerStat no load on cpu")
+				continue
+			}
+
+			// Divide work
+			u := units / numCores
+			if u == 0 {
+				// Only a bit of work to be done
+				log.Tracef("workerStat busy short: %v units: %v",
+					busy, units*frequency)
 				go func() {
 					d := load.UserWork(units * frequency)
-					log.Tracef("duration %v", d)
+					log.Tracef("workerStat duration short %v",
+						d)
 				}()
+				continue
+			}
+			units = u
+
+			log.Tracef("workerStat busy: %v units: %v", busy,
+				units*frequency)
+			for i := 0; i < numCores; i++ {
+				x := i
+				go func(int) {
+					d := load.UserWork(units * frequency)
+					log.Tracef("workerStat duration %v", d)
+				}(x)
 			}
 		}
 	}
@@ -795,7 +817,7 @@ func _main() error {
 		}
 		recordCount = 0
 
-		log.Tracef("Awaiting tick, entries processed: %v", entries)
+		log.Tracef("awaiting tick, entries processed: %v", entries)
 
 		select {
 		case <-ctx.Done():

@@ -566,7 +566,6 @@ func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat)
 			} else if busy > 100 {
 				busy = 100
 			}
-			busy = 70
 			units := int(td[int(busy)])
 			units /= numCores
 			log.Tracef("busy: %v units: %v", busy, units)

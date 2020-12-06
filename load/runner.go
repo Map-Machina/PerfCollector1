@@ -177,7 +177,6 @@ func (w *Worker) train(cpuLoad float64) (int, error) {
 	// Rough CPU usage per core
 	replayLoad := math.RoundToEven(cpuLoad / 100 *
 		w.unitsPerSecond * float64(w.measuredFrequency))
-	//fmt.Printf("replayLoad %v\n", replayLoad)
 	// Execute work
 	start := time.Now()
 	var wg sync.WaitGroup
@@ -198,7 +197,7 @@ func (w *Worker) train(cpuLoad float64) (int, error) {
 	} else {
 		UserIdle(idleDuration)
 	}
-	return int(replayLoad), nil
+	return int(replayLoad) * int(w.virtualCores), nil
 }
 
 // Train returns units run for each 10 percentile.
@@ -299,7 +298,7 @@ func (w *Worker) Train(verbose bool) (map[int]int, error) {
 			return nil, fmt.Errorf("no load found within margin")
 		}
 	}
-	loadPercent[100] = int(w.unitsPerSecond)
+	loadPercent[100] = int(w.unitsPerSecond) * int(w.virtualCores)
 
 	return loadPercent, nil
 }

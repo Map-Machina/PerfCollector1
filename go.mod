@@ -12,6 +12,7 @@ require (
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/jrick/flagfile v0.0.0-20200516155228-eacdea149b40
 	github.com/jrick/logrotate v1.0.0
+	github.com/juju/loggo v0.0.0-20200526014432-9ce3a2e09b5e
 	github.com/lib/pq v1.8.0
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e

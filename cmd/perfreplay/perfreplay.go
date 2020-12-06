@@ -1,28 +1,40 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/businessperformancetuning/perfcollector/cmd/perfcpumeasure/training"
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
 	"github.com/businessperformancetuning/perfcollector/database"
+	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
+	"github.com/juju/loggo"
+)
+
+const (
+	defaultLogging = "prp=INFO"
 )
 
 var (
 	defaultHomeDir    = dcrutil.AppDataDir("perfreplay", false)
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfreplay.conf")
+
+	log = loggo.GetLogger("prp")
 )
 
 func versionString() string {
@@ -33,11 +45,13 @@ type config struct {
 	Config      flag.Value
 	ShowVersion bool
 	Verbose     bool
+	Log         string
 	Cache       string
 	SiteName    string
 	License     string
 	InputFile   string
 	Output      string
+	Training    string
 	Site        uint64
 	Host        uint64
 	Run         uint64
@@ -69,6 +83,8 @@ Flags:
 	Input file, e.g. ~/journal
   --output string
 	Output file, e.g. ~/replay.json
+  --training string
+	Training data file, e.g. ~/training.json
 `)
 	os.Exit(2)
 }
@@ -80,11 +96,13 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.Var(c.Config, "C", "config file")
 	fs.BoolVar(&c.ShowVersion, "V", false, "")
 	fs.BoolVar(&c.Verbose, "v", false, "")
+	fs.StringVar(&c.Log, "log", defaultLogging, "")
 	fs.StringVar(&c.Cache, "cache", "", "")
 	fs.StringVar(&c.SiteName, "sitename", "", "")
 	fs.StringVar(&c.License, "license", "", "")
 	fs.StringVar(&c.InputFile, "input", "", "")
 	fs.StringVar(&c.Output, "output", "", "")
+	fs.StringVar(&c.Training, "training", "", "")
 	fs.Uint64Var(&c.Site, "siteid", 0, "")
 	fs.Uint64Var(&c.Host, "host", 0, "")
 	fs.Uint64Var(&c.Run, "run", 0, "")
@@ -197,6 +215,12 @@ func loadConfig() (*config, []string, error) {
 		os.Exit(1)
 	}
 	cfg.Output = cleanAndExpandPath(cfg.Output)
+
+	if cfg.Training == "" {
+		fmt.Fprintln(os.Stderr, "Must provide --training")
+		os.Exit(1)
+	}
+	cfg.Output = cleanAndExpandPath(cfg.Training)
 
 	if cfg.Cache != "" {
 		cfg.Cache = cleanAndExpandPath(cfg.Cache)
@@ -454,11 +478,169 @@ func giveOrTake(x, y, percent uint64) bool {
 	return false
 }
 
+func workerMem(ctx context.Context, wg *sync.WaitGroup, c chan *database.Meminfo) {
+	defer wg.Done()
+
+	log.Infof("workerMem: launched")
+	defer log.Infof("workerMem: exit")
+
+	var (
+		memoryLocation []byte // Mmap pointer
+		memorySize     uint64 // Cache value
+		err            error
+	)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case m, ok := <-c:
+			if !ok {
+				log.Errorf("workerMem channel exited")
+				return
+			}
+			// Only reallocate memory if the size differs by >10%.
+			// Painting memory is very expensive so try to avoid it
+			// in order to not contaminate CPU usage.
+			if giveOrTake(m.MemUsed, memorySize, 10) {
+				continue
+			}
+
+			log.Tracef("Reallocate MemUsed: %v\n", m.MemUsed*1024)
+			// Free prior memory
+			if memoryLocation != nil {
+				err = munmap(memoryLocation)
+				if err != nil {
+					// XXX should we abort?
+					log.Errorf("munmap: %v", err)
+					continue
+				}
+			}
+
+			// Allocate new size
+			memoryLocation, err = mmap(m.MemUsed * 1024)
+			if err != nil {
+				// XXX should we abort?
+				log.Errorf("mmap: %v", err)
+				continue
+			}
+			memorySize = m.MemUsed
+		}
+	}
+}
+
+var (
+	td        = make([]uint, 101) // Training data
+	numCores  = -1
+	frequency = -1
+)
+
+func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat) {
+	defer wg.Done()
+
+	log.Infof("workerStat: launched")
+	defer log.Infof("workerStat: exit")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case s, ok := <-c:
+			if !ok {
+				log.Errorf("workerStat channel exited")
+				return
+			}
+			if len(s) == 0 {
+				log.Errorf("workerStat received empty stat array")
+				continue
+			}
+
+			// We only care about CPU -1
+			if s[0].CPU != -1 {
+				log.Errorf("workerStat invalid CPU: %v", s[0].CPU)
+				continue
+			}
+			busy := 100 - s[0].Idle
+			if busy < 0 {
+				busy = 0
+			} else if busy > 100 {
+				busy = 100
+			}
+			busy = 70
+			units := int(td[int(busy)])
+			units /= numCores
+			log.Tracef("busy: %v units: %v", busy, units)
+			for i := 0; i < numCores; i++ {
+				go func() {
+					d := load.UserWork(units * frequency)
+					log.Tracef("duration %v", d)
+				}()
+			}
+		}
+	}
+}
 func _main() error {
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return err
 	}
+
+	// Load training data
+	tdf, err := os.Open(cfg.Training)
+	if err != nil {
+		return fmt.Errorf("could not open training data: %v", err)
+	}
+	jd := json.NewDecoder(tdf)
+	for {
+		var jsonTD training.Training
+		err = jd.Decode(&jsonTD)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("decoding training data: %v", err)
+		}
+		td[jsonTD.Busy] = jsonTD.Units
+
+		// Enforce siteid and host
+		if cfg.Site != jsonTD.SiteID || cfg.Host != jsonTD.Host {
+			return fmt.Errorf("unexpected site/host found")
+		}
+	}
+
+	// Fill out rest of training data
+	round := false // XXX Make a flag?
+	for i := 0; i < 100; i += 10 {
+		min := float64(td[i])
+		max := float64(td[i+10])
+		step := (max - min) / 10
+		log.Tracef("i %v min %v max %v step %v\n", i, min, max, step)
+		for x := 1; x < 10; x++ {
+			ofs := x + i
+			units := min + (step * float64(x))
+			if round {
+				// ROund units
+				td[ofs] = uint(math.Round(units))
+			} else {
+				// Clip units
+				td[ofs] = uint(units)
+			}
+			log.Tracef("  x %v units %v td %v\n", ofs, units,
+				td[ofs])
+		}
+	}
+
+	// Initialize loggers
+	loggo.ConfigureLoggers(cfg.Log)
+
+	log.Infof("Start of day")
+	log.Infof("Version %s (Go version %s %s/%s)", versionString(),
+		runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	log.Infof("Site   : %v", cfg.SiteName)
+	log.Infof("License: %v", cfg.License)
+	log.Infof("Site ID: %v", cfg.Site)
+	log.Infof("Host ID: %v", cfg.Host)
+	log.Infof("Run ID : %v", cfg.Run)
 
 	// Generate journal key from license material. There is no function for
 	// this in order to obfuscate this terrible trick.
@@ -508,6 +690,27 @@ func _main() error {
 		}
 		seen[wc.Measurement.System] = struct{}{}
 	}
+	frequency = int(freq / time.Second) // Store frequency
+
+	// Determine core count/
+	_, virtualCores, err := load.NumCores()
+	if err != nil {
+		return fmt.Errorf("Could not determine core count: %v", err)
+	}
+	numCores = int(virtualCores)
+
+	// Launch workers
+	var wg sync.WaitGroup
+	ctx, cancel := withShutdownCancel(context.Background())
+	go shutdownListener()
+
+	wg.Add(1)
+	workerStatC := make(chan []database.Stat)
+	go workerStat(ctx, &wg, workerStatC)
+
+	wg.Add(1)
+	workerMemC := make(chan *database.Meminfo)
+	go workerMem(ctx, &wg, workerMemC)
 
 	// Rewind file
 	fs, err := f.Seek(0, io.SeekStart)
@@ -523,13 +726,7 @@ func _main() error {
 	recordCount := 0
 	primeCounter := 0
 
-	// Memory subsystem
-	var (
-		memoryLocation []byte // Mmap pointer
-		memorySize     uint64 // Cache value
-	)
-
-	start := time.Now()
+	timer := time.NewTimer(freq)
 	for {
 		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
 		if err != nil {
@@ -548,7 +745,8 @@ func _main() error {
 			// First measurement is tossed since we need to prime
 			// the replay.
 			primeCounter++
-			fmt.Printf("primeCounter %v -> %T\n", primeCounter, wc)
+			log.Tracef("primeCounter %v -> %v", primeCounter,
+				wc.Measurement.System)
 			continue
 		}
 
@@ -563,38 +761,32 @@ func _main() error {
 
 		entries++
 
-		fmt.Printf("got %T\n", record)
 		switch x := record.(type) {
 		case []database.Stat:
-			fmt.Printf("idle %v %v%%\n", x[0].CPU, x[0].Idle)
-		case *database.Meminfo:
-			// Only reallocate memory if the size differs by >10%.
-			// Painting memory is very expensive so try to avoid it
-			// in order to not contaminate CPU usage.
-			if !giveOrTake(x.MemUsed, memorySize, 10) {
-				fmt.Printf("Reallocate MemUsed: %v\n", x.MemUsed*1024)
-				// Free prior memory
-				if memoryLocation != nil {
-					err = munmap(memoryLocation)
-					if err != nil {
-						return fmt.Errorf("munmap: %v",
-							err)
-					}
-				}
+			select {
+			case <-ctx.Done():
+				log.Errorf("workerStat context exit")
+				goto done
+			case workerStatC <- x:
+			default:
+				log.Errorf("couldn't send work to workerStat")
+			}
 
-				// Allocate new size
-				memoryLocation, err = mmap(x.MemUsed * 1024)
-				if err != nil {
-					return fmt.Errorf("mmap: %v", err)
-				}
-				memorySize = x.MemUsed
+		case *database.Meminfo:
+			select {
+			case <-ctx.Done():
+				log.Errorf("workerMem context exit")
+				goto done
+			case workerMemC <- x:
+			default:
+				log.Errorf("couldn't send work to workerMem")
 			}
 
 		case []database.NetDev:
 		case []database.Diskstat:
 			_ = x
 		default:
-			fmt.Printf("Unsuported record type: %T\n", record)
+			log.Tracef("Unsuported record type: %T", record)
 			continue
 		}
 
@@ -603,20 +795,24 @@ func _main() error {
 			continue
 		}
 		recordCount = 0
-		fmt.Printf("load er up!! %v\n", entries)
 
-		time.Sleep(freq)
+		log.Tracef("Awaiting tick, entries processed: %v", entries)
+
+		select {
+		case <-ctx.Done():
+			log.Tracef("ctx done: %v", ctx.Err())
+			goto done
+		case <-timer.C:
+			timer = time.NewTimer(freq)
+		}
 	}
 
-	// Post process.
+	// Cancel all go routines
+	cancel()
 
-	if cfg.Verbose {
-		end := time.Now()
-		fmt.Printf("Total entries processed: %v in %v\n",
-			entries, end.Sub(start))
-	}
-
-	return nil
+done:
+	wg.Wait()
+	return ctx.Err()
 }
 
 func main() {

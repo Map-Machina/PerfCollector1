@@ -234,6 +234,9 @@ func UserLoad(duration time.Duration) (loops int) {
 
 func UserWork(workUnits int) (elapsed time.Duration) {
 	start := time.Now()
+	if workUnits <= 0 {
+		return time.Now().Sub(start)
+	}
 	for {
 		unit()
 		workUnits--

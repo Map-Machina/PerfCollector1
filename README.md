@@ -3,6 +3,10 @@
 These tools are at this time strictly Linux only. Substantial effort must be
 made to convert them over to other OS'.
 
+Do read through the entire document first before attempting to set up a
+collection. The setup at this time requires some jumping around and having read
+it in its entirety before attempting an install makes it easier to follow.
+
 The theory of this tool set is to collect and parse performance data. Once data
 has been collected it can be used for visualization and to replay the machine
 load on a differently shaped machine.
@@ -106,30 +110,47 @@ directory. Repeat these steps for all machines that are being measured as well.
 The other place where these tools need to end up are on the machines that going
 to process the journal and where a journal is being replayed.
 
-# perfcollector
-Performance data collector and processor.
+## perfprocessord in sink mode
 
-## perfcollectord
+In practise, it is wise to install `perfcollectord` machines first since
+`perfprocessord` will try to connect to them once launched. The reason this
+guide shows this backwards is because of figuring out the ssh key fingerprint
+while not jumping around in explaining what needs to be done on a single
+machine.
 
+Create an ssh key that will be used to login to the `perfcollectord` machines.
 ```
-perfcollectord --sshid=/home/marco/.ssh/id_ed25519 --listen=127.0.0.1:2222 --allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
+$ ssh-keygen -t ed25519
+```
+
+Determine the freshly generated key SHA256 fingerprint:
+```
+$ ssh-keygen -l -f ~/.ssh/id_ed25519 -t SHA256
+256 SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE marco@void (ED25519)
+```
+
+Make note of the portion that is prefixed with `SHA256:`. In this case the
+fingerprint that will be needed to be copy/pasted into the `perfcollectord`
+configuration is: `SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE`.
+
+Launch the `perfprocessord` daemon with two collection hosts as such:
+```
+perfprocessord --sshid=~/.ssh/id_ed25519 --hosts=1:0/127.0.0.1:2222 --hosts=1:1/10.170.0.5:2222 --journal=1 --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d
 ```
 
 All command line switches can also be stored in a configuration file. The
 format is always ~/.TOOLNAME/$TOOLNAME.conf. For example,
 `.perfprocessord/perfprocessord.conf` Any lines prefixed with `#` are ignored.
 
-Here is an example:
+Here is an example that has the exact same options as the command line example:
 ```
-$ cat /home/marco/.perfprocessord/perfprocessord.conf 
-#[Application Options]
-
-#sshid=~/.ssh/id_ed25519
+$ cat ~/.perfprocessord/perfprocessord.conf 
+sshid=~/.ssh/id_ed25519
 
 journal=1
 
 hosts=1:0/127.0.0.1:2222
-#hosts=1:1/10.170.0.5:2222
+hosts=1:1/10.170.0.5:2222
 
 siteid=1
 sitename=Evil Corp
@@ -138,46 +159,201 @@ license=6f37-6910-b2a0-e858-9657-f08d
 
 Note that this example cannot be used verbatim because the license has a
 time bomb builtin. The license must be generated every time for each
-deployment.
+deployment. Ensure there is no trailing whitespace on the license information.
 
-## perfprocessord in sink mode
+The `hosts` entries have the following format: `<site id>:<host id>/<ip
+address>:<port>`. The `<site id>:<host id>` tuple must be unique. The site is
+must be the same for all hosts. The hosts do not require consequtive
+identification numbers.
 
+## perfcollectord
+
+Example of launching a `perfcollectord`:
 ```
-perfprocessord --sshid=~/.ssh/id_ed25519 --hosts=1:0/127.0.0.1:2222 --hosts=1:1/10.170.0.5:2222 --journal=1 --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d
+perfcollectord --sshid=~/.ssh/id_ed25519 --listen=127.0.0.1:2222 --allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
 ```
+
+Note that the `--allowedkeys` entry is identical to the fingerprint  that was
+generated in the prior section.
+
+The command line switches can be put into a configuration file as well. For
+example:
+```
+cat ~/.perfcollectord/perfcollectord.conf
+sshid=~/.ssh/id_ed25519
+listen=127.0.0.1:2222
+allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
+```
+
+The `--listen` flag is optional. If omitted the daemon will listen on all IP
+addresses on port `2222`.
 
 ## perfprocessord single shot commands
 
-* `start` start performance data collection
-* `stop` stop performance data collection
-* `status` returns collector status
+The `perfprocessord` tool also has single shot commands. Those are meant to
+start, stop and monitor collections.
+
+* `start` start performance data collection.
+* `stop` stop performance data collection.
+* `status` returns collector status.
+* `once` returns a single `/proc` or `/sys` entry.
+* `dir` returns the directory contents of `/proc/` or `/sys/` directories.
+* `netcache` returns a JSON object that contains NIC information. This file can be provided to other tools, if desired.
+* `replay` start a replay on the `perfcollectord` hosts. Currently disabled.
 
 Example to start collector (assumed with a configuration file):
 ```
-perfprocessord start
+$ perfprocessord start
 ```
 
-## Print ssh fingerprint example
-
+Example of status:
 ```
-$ ssh-keygen -l -f /home/marco/.ssh/id_ed25519 -t SHA256
-256 SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE marco@void (ED25519)
+perfprocessord status
+Status             : 127.0.0.1:2222
+Sink enabled       : false
+Measurement enabled: true
+Frequency          : 5s
+Queue depth        : 1000
+Queue free         : 1000
+Systems            : [/proc/stat /proc/meminfo /proc/net/dev /proc/diskstats]
+```
+
+Example of stopping a collection:
+```
+$ perfprocessord stop
+```
+
+Example of status when there is no collection ongoing:
+```
+$ perfprocessord status
+Status             : 127.0.0.1:2222
+Sink enabled       : false
+Measurement enabled: false
+```
+
+Example to obtain remote version by using the once command:
+```
+$ perfprocessord once systems=/proc/version
+Linux version 5.8.18_1 (void-buildslave@a-hel-fi) (gcc (GCC) 9.3.0, GNU ld (GNU Binutils) 2.34) #1 SMP Sun Nov 1 14:25:13 UTC 2020
+```
+
+Example of obtaining a remote directory (note the required trailing slash):
+```
+$ perfprocessord dir directories=/proc/sys/net/unix/
+Directory: /proc/sys/net/unix/
+        max_dgram_qlen
+```
+
+Example of obtaining the netcache JSON object:
+```
+$ perfprocessord netcache run=0 > netcache.json
+$ cat netcache.json
+{"Site":1,"Host":0,"Run":0,"Measurement":{"Timestamp":"2020-12-07T09:09:47.38046831-06:00","Start":"0001-01-01T00:00:00Z","Duration":0,"Frequency":0,"System":"/sys/class/net/eno1/duplex","Measurement":"full\n"}}
+{"Site":1,"Host":0,"Run":0,"Measurement":{"Timestamp":"2020-12-07T09:09:47.38046831-06:00","Start":"0001-01-01T00:00:00Z","Duration":0,"Frequency":0,"System":"/sys/class/net/eno1/speed","Measurement":"1000\n"}}
 ```
 
 ##  perfjournal
 
+The `perfjournal` tool is used to decrypt a collection journal.
+
+Here is an example to decrypt a journal to JSON:
 ```
-$ perfjournal --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input /home/marco/.perfprocessord/data/journal --output x.json --mode=json  -v
+$ perfjournal --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input ~/.perfprocessord/data/journal --output x.json --mode=json -v
+Total entries processed: 54340 in 4.642052411s
+```
+
+Here is an example to decrypt a journal to a directory structure that contains
+CSV files:
+```
+$ mkdir ~/datacollection
+$ perfjournal --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input ~/.perfprocessord/data/journal --output=~/datacollection --mode=csv -v
+open /home/marco/xx/proc/stat
+open /home/marco/xx/proc/meminfo
+open /home/marco/xx/proc/net/dev
+open /home/marco/xx/proc/diskstats
+Entries processed: 23429
+Entries processed: 46651
+Total entries processed: 54340 in 11.633859494s
+```
+
+It is advisable to stop any collections and move the journal to a new location
+before decrypting. Having a single journal per collection makes managing the
+system a bit easier.
+
+Note that the license information must exactly match the `perfprocessord.conf`
+file or decryption will fail.
+
+Note that `JSON` mode exports raw performance data wrapped in `JSON` objects
+whereas CSV mode exports cubed (`sar` format) `CSV` files. The `JSON` object
+format is as follows:
+```
+// WrapPCCollection wraps a raw collection in a site/host/run tuple.
+type WrapPCCollection struct {
+        Site        uint64
+        Host        uint64
+        Run         uint64
+        Measurement *types.PCCollection
+}
+
+// PCCollection is a raw measurement that is sunk into the network.
+type PCCollection struct {
+	Timestamp   time.Time     // Time of *overall* collection
+	Start       time.Time     // Start time of *this* collection
+	Duration    time.Duration // Time collection took
+	Frequency   time.Duration // Collection frequency
+	System      string        // System that was measured
+	Measurement string        // Raw measurement
+}
 ```
 
 ## perfcpumeasure
 
+The `perfcpumeasure` tool is used to collect CPU "unit" execution speeds for
+every tenth percentile.
 ```
 $ perfcpumeasure --siteid=1 --host=0 -v > training.json
+=== looking for 10 busy 10.5 (load 10) units 72
+=== looking for 20 busy 20.0 (load 20) units 136
+=== looking for 30 busy 30.5 (load 30) units 208
+=== looking for 40 busy 40.9 (load 40) units 280
+=== looking for 50 busy 50.8 (load 50) units 344
+=== looking for 60 busy 61.0 (load 60) units 416
+=== looking for 70 busy 71.3 (load 70) units 488
+=== looking for 80 busy 80.2 (load 80) units 552
+=== looking for 90 busy 90.6 (load 90) units 624
+$ cat training.json 
+{"siteid":1,"host":0,"busy":10,"units":72}
+{"siteid":1,"host":0,"busy":20,"units":136}
+{"siteid":1,"host":0,"busy":30,"units":208}
+{"siteid":1,"host":0,"busy":40,"units":280}
+{"siteid":1,"host":0,"busy":50,"units":344}
+{"siteid":1,"host":0,"busy":60,"units":416}
+{"siteid":1,"host":0,"busy":70,"units":488}
+{"siteid":1,"host":0,"busy":80,"units":552}
+{"siteid":1,"host":0,"busy":90,"units":624}
+{"siteid":1,"host":0,"busy":100,"units":688}
 ```
+
+Note that `siteid` and `host` must match whatever is being replayed later. This
+will need some automation but for now it must be provided manually.
 
 ## perfreplay
 
+The `perfreplay` replay tool executes an attempted replica of the load found in
+a journal. Again note that `host` and `run` must match earlier collected CPU
+execution speeds.
 ```
-perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input /home/marco/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json
+perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json
+2020-12-07 15:35:10 INFO prp perfreplay.go:657 Start of day
+2020-12-07 15:35:10 INFO prp perfreplay.go:658 Version 1.0.0 (Go version go1.15.5 linux/amd64)
+2020-12-07 15:35:10 INFO prp perfreplay.go:660 Site   : Evil Corp
+2020-12-07 15:35:10 INFO prp perfreplay.go:661 License: 6f37-6910-b2a0-e858-9657-f08d
+2020-12-07 15:35:10 INFO prp perfreplay.go:662 Site ID: 1
+2020-12-07 15:35:10 INFO prp perfreplay.go:663 Host ID: 0
+2020-12-07 15:35:10 INFO prp perfreplay.go:664 Run ID : 0
+2020-12-07 15:35:10 INFO prp perfreplay.go:541 workerStat: launched
+2020-12-07 15:35:10 INFO prp perfreplay.go:484 workerMem: launched
 ```
+
+At this time only CPU (`stat`) and memory (`meminfo`) are being replayed. The
+replay ticks at the exact same frequency as the collection.

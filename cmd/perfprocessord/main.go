@@ -560,7 +560,7 @@ func (p *PerfCtl) singleCommand(ctx context.Context, s *session, h HostIdentifie
 			return err
 		}
 		dirsReply, ok := reply.(types.PCCollectDirectoriesReply)
-		spew.Dump(dirsReply)
+		//spew.Dump(dirsReply)
 		if !ok {
 			return fmt.Errorf("directories reply invalid type: %T",
 				reply)

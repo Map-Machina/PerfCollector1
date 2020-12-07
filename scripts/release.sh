@@ -33,10 +33,11 @@ for i in $SYS; do
     echo "Building:" $OS $ARCH
 # Add CGO_ENABLED=0 so that the files are statically linked
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfcollectord
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfcpumeasure
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfjournal
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perflicense
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfprocessord
-#    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perflicense
-#    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfjournal
-    #cp $GPATH/src/github.com/businessperformancetuning/perfcollector/cmd/perfcollectord/perfcollectord.conf .
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfreplay
     cd ..
     if [[ $OS = "windows" ]]; then
 	zip -r $PACKAGE-$i-$TAG.zip $PACKAGE-$i-$TAG

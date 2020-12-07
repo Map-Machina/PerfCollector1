@@ -806,6 +806,7 @@ func _main() error {
 		case []database.NetDev:
 		case []database.Diskstat:
 			_ = x
+			//spew.Dump(x)
 		default:
 			log.Tracef("Unsuported record type: %T", record)
 			continue

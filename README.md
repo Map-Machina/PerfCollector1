@@ -135,7 +135,7 @@ configuration is: `SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE`.
 
 Launch the `perfprocessord` daemon with two collection hosts as such:
 ```
-perfprocessord --sshid=~/.ssh/id_ed25519 --hosts=1:0/127.0.0.1:2222 --hosts=1:1/10.170.0.5:2222 --journal=1 --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d
+$ perfprocessord --sshid=~/.ssh/id_ed25519 --hosts=1:0/127.0.0.1:2222 --hosts=1:1/10.170.0.5:2222 --journal=1 --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d
 ```
 
 All command line switches can also be stored in a configuration file. The
@@ -174,7 +174,7 @@ is currently not functional and is therefore not documented.
 
 Example of launching a `perfcollectord`:
 ```
-perfcollectord --sshid=~/.ssh/id_ed25519 --listen=127.0.0.1:2222 --allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
+$ perfcollectord --sshid=~/.ssh/id_ed25519 --listen=127.0.0.1:2222 --allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
 ```
 
 Note that the `--allowedkeys` entry is identical to the fingerprint  that was
@@ -183,7 +183,7 @@ generated in the prior section.
 The command line switches can be put into a configuration file as well. For
 example:
 ```
-cat ~/.perfcollectord/perfcollectord.conf
+$ cat ~/.perfcollectord/perfcollectord.conf
 sshid=~/.ssh/id_ed25519
 listen=127.0.0.1:2222
 allowedkeys=SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE
@@ -212,7 +212,7 @@ $ perfprocessord start
 
 Example of status:
 ```
-perfprocessord status
+$ perfprocessord status
 Status             : 127.0.0.1:2222
 Sink enabled       : false
 Measurement enabled: true
@@ -347,7 +347,7 @@ The `perfreplay` replay tool executes an attempted replica of the load found in
 a journal. Again note that `host` and `run` must match earlier collected CPU
 execution speeds.
 ```
-perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json
+$ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json
 2020-12-07 15:35:10 INFO prp perfreplay.go:657 Start of day
 2020-12-07 15:35:10 INFO prp perfreplay.go:658 Version 1.0.0 (Go version go1.15.5 linux/amd64)
 2020-12-07 15:35:10 INFO prp perfreplay.go:660 Site   : Evil Corp

@@ -1,4 +1,4 @@
-# Performance Monitoring and replay tools
+# Performance monitoring and replay tools
 
 These tools are at this time strictly Linux only. Substantial effort must be
 made to convert them over to other OS'.
@@ -94,7 +94,7 @@ This creates a directory with 32 and 64 bit Linux binaries and a manifest with
 digests. The tar file marked `i386` is 32 bit and the one marked `amd64` is 64
 bit. The 32 bit version is built but should not be used unless necessary.
 
-## Instalation
+## Installation
 
 Copy the tar file to the target systems and untar it. For example:
 ```
@@ -147,6 +147,7 @@ Here is an example that has the exact same options as the command line example:
 $ cat ~/.perfprocessord/perfprocessord.conf 
 sshid=~/.ssh/id_ed25519
 
+# Enable journal mode
 journal=1
 
 hosts=1:0/127.0.0.1:2222
@@ -165,6 +166,9 @@ The `hosts` entries have the following format: `<site id>:<host id>/<ip
 address>:<port>`. The `<site id>:<host id>` tuple must be unique. The site is
 must be the same for all hosts. The hosts do not require consequtive
 identification numbers.
+
+The tool supports collecting raw data directly into a database but that support
+is currently not functional and is therefore not documented.
 
 ## perfcollectord
 

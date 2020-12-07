@@ -140,38 +140,44 @@ Note that this example cannot be used verbatim because the license has a
 time bomb builtin. The license must be generated every time for each
 deployment.
 
-## perfprocessord in sink mode (required database)
+## perfprocessord in sink mode
+
 ```
-perfprocessord --sshid=/home/marco/.ssh/id_ed25519'
+perfprocessord --sshid=~/.ssh/id_ed25519 --hosts=1:0/127.0.0.1:2222 --hosts=1:1/10.170.0.5:2222 --journal=1 --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d
 ```
 
 ## perfprocessord single shot commands
+
 * `start` start performance data collection
 * `stop` stop performance data collection
 * `status` returns collector status
 
-Example to start collector:
+Example to start collector (assumed with a configuration file):
 ```
-perfprocessord --sshid=/home/marco/.ssh/id_ed25519 --host=127.0.0.1:2222 --debuglevel=trace start
+perfprocessord start
 ```
 
 ## Print ssh fingerprint example
+
 ```
 $ ssh-keygen -l -f /home/marco/.ssh/id_ed25519 -t SHA256
 256 SHA256:Rn2wwQetEJV/haY0qZXDu9p2zPPQw9pGi2Amiwuc9dE marco@void (ED25519)
 ```
 
 ##  perfjournal
+
 ```
 $ perfjournal --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input /home/marco/.perfprocessord/data/journal --output x.json --mode=json  -v
 ```
 
 ## perfcpumeasure
+
 ```
 $ perfcpumeasure --siteid=1 --host=0 -v > training.json
 ```
 
 ## perfreplay
+
 ```
 perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input /home/marco/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json
 ```

@@ -47,4 +47,4 @@ for i in $SYS; do
     rm -r $PACKAGE-$i-$TAG
 done
 
-sha256sum * > manifest-$TAG.txt
+shasum -a 256 * > manifest-$TAG.txt

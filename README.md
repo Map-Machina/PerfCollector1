@@ -110,6 +110,13 @@ directory. Repeat these steps for all machines that are being measured as well.
 The other place where these tools need to end up are on the machines that going
 to process the journal and where a journal is being replayed.
 
+## perflicense
+
+Create a new license to be used with `perfprocessord`, `perfjournal` and
+`perfreplay`.
+
+It is documented here: https://github.com/businessperformancetuning/perfcollector/tree/master/cmd/perflicense
+
 ## perfprocessord in sink mode
 
 In practise, it is wise to install `perfcollectord` machines first since

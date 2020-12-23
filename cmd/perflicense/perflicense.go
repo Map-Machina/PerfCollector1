@@ -278,10 +278,11 @@ func licenseAdd(ctx context.Context, db database.Database, a map[string]string) 
 		Duration:        int64(duration),
 		Expiration:      ls.Timestamp.Unix(),
 	}
-	err = db.LicenseInsert(ctx, &l)
-	if err != nil {
-		return fmt.Errorf("user insert error: %v", err)
-	}
+	//err = db.LicenseInsert(ctx, &l)
+	//if err != nil {
+	//	return fmt.Errorf("user insert error: %v", err)
+	//}
+	_ = l
 
 	fmt.Printf("# License information\n")
 	fmt.Printf("siteid=%v\n", siteID)

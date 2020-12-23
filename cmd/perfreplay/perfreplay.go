@@ -733,6 +733,8 @@ func _main() error {
 	workerMemC := make(chan *database.Meminfo)
 	go workerMem(ctx, &wg, workerMemC)
 
+	// XXX wait for thread launch
+
 	// Rewind file
 	fs, err := f.Seek(0, io.SeekStart)
 	if err != nil {

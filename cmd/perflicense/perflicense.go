@@ -206,14 +206,14 @@ func siteAdd(ctx context.Context, db database.Database, a map[string]string) err
 
 func licenseAdd(ctx context.Context, db database.Database, a map[string]string) error {
 	// Creator.
-	userID, err := util.ArgAsUint("user", a)
-	if err != nil {
-		return err
-	}
-	user, err := db.UserSelect(ctx, userID)
-	if err != nil {
-		return err
-	}
+	//userID, err := util.ArgAsUint("user", a)
+	//if err != nil {
+	//	return err
+	//}
+	//user, err := db.UserSelect(ctx, userID)
+	//if err != nil {
+	//	return err
+	//}
 
 	// Site information
 	sid, err := util.ArgAsUint("siteid", a)
@@ -265,24 +265,25 @@ func licenseAdd(ctx context.Context, db database.Database, a map[string]string) 
 	if err != nil {
 		return err
 	}
+	_ = ls
 
 	// Insert into db.
-	l := database.License{
-		CreatedBy:       user.ID,
-		Timestamp:       time.Now().Unix(),
-		Version:         license.VersionLicenseKey,
-		ExternalVersion: version,
-		SiteID:          sid,
-		SiteName:        siteName,
-		UniqueID:        mac,
-		Duration:        int64(duration),
-		Expiration:      ls.Timestamp.Unix(),
-	}
+	//l := database.License{
+	//	CreatedBy:       user.ID,
+	//	Timestamp:       time.Now().Unix(),
+	//	Version:         license.VersionLicenseKey,
+	//	ExternalVersion: version,
+	//	SiteID:          sid,
+	//	SiteName:        siteName,
+	//	UniqueID:        mac,
+	//	Duration:        int64(duration),
+	//	Expiration:      ls.Timestamp.Unix(),
+	//}
 	//err = db.LicenseInsert(ctx, &l)
 	//if err != nil {
 	//	return fmt.Errorf("user insert error: %v", err)
 	//}
-	_ = l
+	//_ = l
 
 	fmt.Printf("# License information\n")
 	fmt.Printf("siteid=%v\n", siteID)
@@ -297,26 +298,27 @@ func _main() error {
 	if err != nil {
 		return err
 	}
+	_ = cfg
 
 	if len(args) == 0 {
 		return fmt.Errorf("no action provided")
 	}
 
 	var db database.Database
-	switch cfg.DB {
-	case "postgres":
-		db, err = postgres.New("license", cfg.DBURI)
-		if err != nil {
-			return fmt.Errorf("database new: %v", err)
-		}
-	default:
-		return fmt.Errorf("invalid database: %v", cfg.DB)
-	}
-	err = db.Open()
-	if err != nil {
-		return fmt.Errorf("database open: %v", err)
-	}
-	defer db.Close()
+	//switch cfg.DB {
+	//case "postgres":
+	//	db, err = postgres.New("license", cfg.DBURI)
+	//	if err != nil {
+	//		return fmt.Errorf("database new: %v", err)
+	//	}
+	//default:
+	//	return fmt.Errorf("invalid database: %v", cfg.DB)
+	//}
+	//err = db.Open()
+	//if err != nil {
+	//	return fmt.Errorf("database open: %v", err)
+	//}
+	//defer db.Close()
 
 	// Deal with command line
 	a, err := util.ParseArgs(args)

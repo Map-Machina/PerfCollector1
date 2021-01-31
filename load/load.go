@@ -365,10 +365,11 @@ done:
 func DiskWrite(parent context.Context, maxDuration time.Duration, filename string, units, size uint64) (time.Duration, uint64, error) {
 	ctx, _ := context.WithTimeout(parent, maxDuration)
 
-	block, err := util.Random(int(size))
-	if err != nil {
-		return 0, 0, err
-	}
+	//block, err := util.Random(int(size))
+	//if err != nil {
+	//	return 0, 0, err
+	//}
+	block := make([]byte, size)
 
 	// Work
 	start := time.Now()

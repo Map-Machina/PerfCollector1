@@ -18,4 +18,5 @@ type DiskMapper struct {
 	// Disk mapping
 	DeviceName string `json:"devicename"` // Device name, e.g. sda1
 	MountPoint string `json:"mountpoint"` // Mount point, e.g. /replay/sda1
+	ReadSize   string `json:"readsize"`   // Human readable read staging file size
 }

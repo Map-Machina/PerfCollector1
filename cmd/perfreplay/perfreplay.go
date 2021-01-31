@@ -23,7 +23,9 @@ import (
 	"github.com/businessperformancetuning/perfcollector/database"
 	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/parser"
+	"github.com/businessperformancetuning/perfcollector/util"
 	"github.com/decred/dcrd/dcrutil"
+	"github.com/dustin/go-humanize"
 	"github.com/jrick/flagfile"
 	"github.com/juju/loggo"
 )
@@ -609,6 +611,95 @@ func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat)
 	}
 }
 
+type modeRW int
+
+const (
+	modeRead modeRW = iota
+	modeWrite
+)
+
+func loadDisk(ctx context.Context, mode modeRW, ds database.Diskstat) {
+	mapping, ok := dm[ds.Name]
+	if !ok {
+		log.Errorf("unknown disk mapping: %v", ds.Name)
+		return
+	}
+
+	var (
+		tps, blocks  *float64
+		ms, filename string
+	)
+	if mode == modeRead {
+		tps = &ds.Rtps
+		blocks = &ds.Bread
+		ms = "R"
+		log.Tracef("%v rtps %v bread %v", ds.Name, ds.Rtps, ds.Bread)
+
+		filename = filepath.Join(mapping, "read")
+	} else {
+		tps = &ds.Wtps
+		blocks = &ds.Bwrtn
+		ms = "W"
+		log.Tracef("%v wtps %v bwrtn %v", ds.Name, ds.Wtps, ds.Bwrtn)
+
+		f, err := ioutil.TempFile(mapping, "write")
+		if err != nil {
+			log.Errorf("tempfile %v: %v", mapping, err)
+			return
+		}
+		filename = f.Name()
+		f.Close()
+		defer os.Remove(filename)
+	}
+	ios := uint64(*tps)
+	b := uint64(*blocks)
+	if ios <= 1 {
+		ios = 1
+	}
+	size := b / ios
+	if size == 0 {
+		size = 1
+	}
+	size <<= 9 // In blocks
+	log.Tracef("%v mode %v ios %v size %v b %v", ds.Name, ms, ios, size, b)
+
+	// Hit it
+	timeout := time.Duration(frequency) * time.Second
+	var (
+		err    error
+		d      time.Duration
+		actual uint64
+	)
+	if mode == modeRead {
+		d, actual, err = load.DiskRead(ctx, timeout, filename, ios,
+			size)
+		if err != nil {
+			log.Errorf("diskread %v ios %v size %v: %v",
+				filename, ios, size, err)
+			return
+		}
+	} else {
+		d, actual, err = load.DiskWrite(ctx, timeout, filename, ios,
+			size)
+		if err != nil {
+			log.Errorf("diskwrite %v ios %v size %v: %v",
+				filename, ios, size, err)
+			return
+		}
+	}
+	_ = d
+	_ = actual
+	//log.Tracef("%v %v d %v actual %v", ds.Name, ms, d, actual)
+}
+
+func loadRead(ctx context.Context, ds database.Diskstat) {
+	loadDisk(ctx, modeRead, ds)
+}
+
+func loadWrite(ctx context.Context, ds database.Diskstat) {
+	loadDisk(ctx, modeWrite, ds)
+}
+
 func workerDisk(ctx context.Context, wg *sync.WaitGroup, c chan []database.Diskstat) {
 	defer wg.Done()
 
@@ -634,7 +725,7 @@ func workerDisk(ctx context.Context, wg *sync.WaitGroup, c chan []database.Disks
 			//spew.Dump(s)
 			for k := range s {
 				// Complain only once
-				name, ok := dm[s[k].Name]
+				_, ok := dm[s[k].Name]
 				if !ok {
 					if _, ok := dmSeen[s[k].Name]; ok {
 						continue
@@ -645,13 +736,60 @@ func workerDisk(ctx context.Context, wg *sync.WaitGroup, c chan []database.Disks
 					continue
 				}
 
-				// Do io
+				// Reads
 				r := s[k]
-				log.Infof("%v rtps %v bread %v wtps %v bwrtn %v",
-					name, r.Rtps, r.Bread, r.Wtps, r.Bwrtn)
+				if r.Bread != 0 {
+					go loadRead(ctx, r)
+				}
+
+				// Writes
+				if r.Bwrtn != 0 {
+					go loadWrite(ctx, r)
+				}
 			}
 		}
 	}
+}
+
+func stage(filename, sizeS string) error {
+	size, err := humanize.ParseBytes(sizeS)
+	if err != nil {
+		return fmt.Errorf("stage file invalid size: %v: %v",
+			sizeS, err)
+	}
+	if size == 0 {
+		return fmt.Errorf("stage file size cannot be 0")
+	}
+
+	// If file exists and is the right size don't stage it
+	s, err := os.Stat(filename)
+	if err == nil {
+		if s.Size() == int64(size) {
+			return nil
+		}
+	}
+
+	f, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("could not create stage file: %v", err)
+	}
+	defer f.Close()
+
+	mb := size / (1024 * 1024)
+	mbChunk, err := util.Random(1024 * 1024)
+	if err != nil {
+		return fmt.Errorf("could not obtain random data for staging "+
+			"file: %v", err)
+	}
+	for i := uint64(0); i < mb; i++ {
+		_, err = f.Write(mbChunk)
+		if err != nil {
+			return fmt.Errorf("could not write staging file: %v",
+				err)
+		}
+	}
+
+	return nil
 }
 
 func _main() error {
@@ -706,6 +844,9 @@ func _main() error {
 		}
 	}
 
+	// Initialize loggers
+	loggo.ConfigureLoggers(cfg.Log)
+
 	// Load disk mapping
 	dmf, err := os.Open(cfg.DiskMapper)
 	if err != nil {
@@ -730,13 +871,14 @@ func _main() error {
 		if !s.IsDir() {
 			return fmt.Errorf("not a dir: %v", jsonDM.MountPoint)
 		}
-		tmpFile, err := ioutil.TempFile(jsonDM.MountPoint, "test")
+
+		// Stage read file
+		filename := filepath.Join(jsonDM.MountPoint, "read")
+		log.Infof("Staging file: %v with %v", filename, jsonDM.ReadSize)
+		err = stage(filename, jsonDM.ReadSize)
 		if err != nil {
-			return fmt.Errorf("could not create temp file: %v",
-				err)
+			return err
 		}
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
 
 		dm[jsonDM.DeviceName] = jsonDM.MountPoint
 
@@ -746,9 +888,6 @@ func _main() error {
 				"disk mapper data")
 		}
 	}
-
-	// Initialize loggers
-	loggo.ConfigureLoggers(cfg.Log)
 
 	log.Infof("Start of day")
 	log.Infof("Version %s (Go version %s %s/%s)", versionString(),

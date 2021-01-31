@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +54,7 @@ type config struct {
 	InputFile   string
 	Output      string
 	Training    string
+	DiskMapper  string
 	Site        uint64
 	Host        uint64
 	Run         uint64
@@ -85,6 +88,8 @@ Flags:
 	Output file, e.g. ~/replay.json
   --training string
 	Training data file, e.g. ~/training.json
+  --diskmapper string
+	Disk mapper data file, e.g. ~/diskmapper.json
 `)
 	os.Exit(2)
 }
@@ -103,6 +108,7 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.StringVar(&c.InputFile, "input", "", "")
 	fs.StringVar(&c.Output, "output", "", "")
 	fs.StringVar(&c.Training, "training", "", "")
+	fs.StringVar(&c.DiskMapper, "diskmapper", "", "")
 	fs.Uint64Var(&c.Site, "siteid", 0, "")
 	fs.Uint64Var(&c.Host, "host", 0, "")
 	fs.Uint64Var(&c.Run, "run", 0, "")
@@ -533,6 +539,8 @@ var (
 	td        = make([]uint, 101) // Training data
 	numCores  = -1
 	frequency = -1
+
+	dm = make(map[string]string) // Disk mapper data
 )
 
 func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat) {
@@ -600,6 +608,52 @@ func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat)
 		}
 	}
 }
+
+func workerDisk(ctx context.Context, wg *sync.WaitGroup, c chan []database.Diskstat) {
+	defer wg.Done()
+
+	log.Infof("workerDisk: launched")
+	defer log.Infof("workerDisk: exit")
+
+	dmSeen := make(map[string]struct{})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case s, ok := <-c:
+			if !ok {
+				log.Errorf("workerDisk channel exited")
+				return
+			}
+			if len(s) == 0 {
+				log.Errorf("workerDisk received empty stat array")
+				continue
+			}
+
+			//spew.Dump(s)
+			for k := range s {
+				// Complain only once
+				name, ok := dm[s[k].Name]
+				if !ok {
+					if _, ok := dmSeen[s[k].Name]; ok {
+						continue
+					}
+					log.Errorf("disk mapping not found: %v",
+						s[k].Name)
+					dmSeen[s[k].Name] = struct{}{}
+					continue
+				}
+
+				// Do io
+				r := s[k]
+				log.Infof("%v rtps %v bread %v wtps %v bwrtn %v",
+					name, r.Rtps, r.Bread, r.Wtps, r.Bwrtn)
+			}
+		}
+	}
+}
+
 func _main() error {
 	cfg, _, err := loadConfig()
 	if err != nil {
@@ -625,7 +679,8 @@ func _main() error {
 
 		// Enforce siteid and host
 		if cfg.Site != jsonTD.SiteID || cfg.Host != jsonTD.Host {
-			return fmt.Errorf("unexpected site/host found")
+			return fmt.Errorf("unexpected site/host found in " +
+				"training data")
 		}
 	}
 
@@ -651,6 +706,47 @@ func _main() error {
 		}
 	}
 
+	// Load disk mapping
+	dmf, err := os.Open(cfg.DiskMapper)
+	if err != nil {
+		return fmt.Errorf("could not open disk mapper data: %v", err)
+	}
+	jdm := json.NewDecoder(dmf)
+	for {
+		var jsonDM training.DiskMapper
+		err = jdm.Decode(&jsonDM)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("decoding disk mapper data: %v", err)
+		}
+
+		// Verify mount point
+		s, err := os.Stat(jsonDM.MountPoint)
+		if err != nil {
+			return fmt.Errorf("invalid mount point: %v", err)
+		}
+		if !s.IsDir() {
+			return fmt.Errorf("not a dir: %v", jsonDM.MountPoint)
+		}
+		tmpFile, err := ioutil.TempFile(jsonDM.MountPoint, "test")
+		if err != nil {
+			return fmt.Errorf("could not create temp file: %v",
+				err)
+		}
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+
+		dm[jsonDM.DeviceName] = jsonDM.MountPoint
+
+		// Enforce siteid and host
+		if cfg.Site != jsonDM.SiteID || cfg.Host != jsonDM.Host {
+			return fmt.Errorf("unexpected site/host found in " +
+				"disk mapper data")
+		}
+	}
+
 	// Initialize loggers
 	loggo.ConfigureLoggers(cfg.Log)
 
@@ -662,6 +758,16 @@ func _main() error {
 	log.Infof("Site ID: %v", cfg.Site)
 	log.Infof("Host ID: %v", cfg.Host)
 	log.Infof("Run ID : %v", cfg.Run)
+
+	// Print disk mapping
+	var sorted []string
+	for k := range dm {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	for k := range sorted {
+		log.Infof("Mapping %v -> %v", sorted[k], dm[sorted[k]])
+	}
 
 	// Generate journal key from license material. There is no function for
 	// this in order to obfuscate this terrible trick.
@@ -710,6 +816,7 @@ func _main() error {
 			break
 		}
 		seen[wc.Measurement.System] = struct{}{}
+
 	}
 	frequency = int(freq / time.Second) // Store frequency
 
@@ -733,7 +840,12 @@ func _main() error {
 	workerMemC := make(chan *database.Meminfo)
 	go workerMem(ctx, &wg, workerMemC)
 
+	wg.Add(1)
+	workerDiskC := make(chan []database.Diskstat)
+	go workerDisk(ctx, &wg, workerDiskC)
+
 	// XXX wait for thread launch
+	time.Sleep(time.Second)
 
 	// Rewind file
 	fs, err := f.Seek(0, io.SeekStart)
@@ -806,9 +918,18 @@ func _main() error {
 			}
 
 		case []database.NetDev:
+			// Ignore for now
+
 		case []database.Diskstat:
-			_ = x
-			//spew.Dump(x)
+			select {
+			case <-ctx.Done():
+				log.Errorf("workerDisk context exit")
+				goto done
+			case workerDiskC <- x:
+			default:
+				log.Errorf("couldn't send work to workerDisk")
+			}
+
 		default:
 			log.Tracef("Unsuported record type: %T", record)
 			continue

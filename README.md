@@ -47,6 +47,7 @@ The repository contains individual tools, libraries and scripts.
 
 All tools live in the `cmd` directory.
 * `cmd/perfcollectord` - Performance data collector daemon.
+* `cmd/perfcollector_script` - Performance data collector script.
 * `cmd/perfcpumeasure` - Tool to generate a CPU performance profile.
 * `cmd/perfjournal` - Tool to decrypt collected performance data.
 * `cmd/perflicense` - Tool to generate a time restrained license.
@@ -176,6 +177,20 @@ identification numbers.
 
 The tool supports collecting raw data directly into a database but that support
 is currently not functional and is therefore not documented.
+
+## perfcollector_script.sh
+
+In order to collect performance measurements on a single machine without
+encryption one can use the `perfcollector_script.sh` script. Note that this
+script is linux and bash specific. This script does require `jq` to be
+installed.
+
+For example:
+```
+$ perfcollector_script/x.sh > xx.json
+```
+
+Just let it sit for a while and hit `ctrl-c` to stop collecting data.
 
 ## perfcollectord
 
@@ -364,6 +379,13 @@ $ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-965
 2020-12-07 15:35:10 INFO prp perfreplay.go:664 Run ID : 0
 2020-12-07 15:35:10 INFO prp perfreplay.go:541 workerStat: launched
 2020-12-07 15:35:10 INFO prp perfreplay.go:484 workerMem: launched
+```
+
+If `--sitename` and `--license` are ommited the tool assumes that the input file is UNENCRYPTED! These collections are obtained with the `perfcollector_script.sh` script. The script hard codes `--siteid=1`, `--host=0` and `--run=0`.
+
+For example:
+```
+$ perfreplay --siteid=1 --host=0 --run=0 --input=xx.json --output=replay.json --training=training.json --diskmapper=diskmapper.json
 ```
 
 At this time only CPU (`stat`), disk (`diskstat`) and memory (`meminfo`) are

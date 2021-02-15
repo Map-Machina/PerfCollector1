@@ -75,7 +75,7 @@ Flags:
   --siteid unsigned integer
 	Numerical site id, e.g. 1
   --sitename string
-        Site name, e.g. "Evil Database Site"
+        Optional site name, e.g. "Evil Database Site". if it is not used the tool assumes an unencrypted journal.
   --license string
         Optional license string, e.g. "6f37-6904-1f83-92f4-595a-0efd". If it is not used the tool assumes an unencrypted journal.
   --cache JSON
@@ -198,12 +198,7 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	if cfg.Site == 0 {
-		fmt.Fprintln(os.Stderr, "Must provide --siteid")
-		os.Exit(1)
-	}
-
-	if cfg.SiteName == "" {
-		fmt.Fprintln(os.Stderr, "Must provide --sitename")
+		fmt.Fprintln(os.Stderr, "Must provide --siteid (not 0)")
 		os.Exit(1)
 	}
 
@@ -887,7 +882,9 @@ func _main() error {
 	log.Infof("Start of day")
 	log.Infof("Version %s (Go version %s %s/%s)", versionString(),
 		runtime.Version(), runtime.GOOS, runtime.GOARCH)
-	log.Infof("Site   : %v", cfg.SiteName)
+	if cfg.SiteName != "" {
+		log.Infof("Site   : %v", cfg.SiteName)
+	}
 	if cfg.License != "" {
 		log.Infof("License: %v", cfg.License)
 	}
@@ -956,7 +953,7 @@ func _main() error {
 				if err == io.EOF {
 					break
 				}
-				return err
+				return fmt.Errorf("pre: %v", err)
 			}
 			wc = &wrap
 		}
@@ -1012,6 +1009,9 @@ func _main() error {
 	}
 
 	// Process
+	if cfg.License == "" {
+		jd = json.NewDecoder(f)
+	}
 	entries := 0
 	recordCount := 0
 	primeCounter := 0
@@ -1037,7 +1037,7 @@ func _main() error {
 				if err == io.EOF {
 					break
 				}
-				return err
+				return fmt.Errorf("parse: %v", err)
 			}
 			wc = &wrap
 		}

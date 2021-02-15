@@ -110,6 +110,13 @@ directory. Repeat these steps for all machines that are being measured as well.
 The other place where these tools need to end up are on the machines that going
 to process the journal and where a journal is being replayed.
 
+## perflicense
+
+Create a new license to be used with `perfprocessord`, `perfjournal` and
+`perfreplay`.
+
+It is documented here: https://github.com/businessperformancetuning/perfcollector/tree/master/cmd/perflicense
+
 ## perfprocessord in sink mode
 
 In practise, it is wise to install `perfcollectord` machines first since
@@ -347,7 +354,7 @@ The `perfreplay` replay tool executes an attempted replica of the load found in
 a journal. Again note that `host` and `run` must match earlier collected CPU
 execution speeds.
 ```
-$ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json
+$ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json --diskmapper=diskmapper.json
 2020-12-07 15:35:10 INFO prp perfreplay.go:657 Start of day
 2020-12-07 15:35:10 INFO prp perfreplay.go:658 Version 1.0.0 (Go version go1.15.5 linux/amd64)
 2020-12-07 15:35:10 INFO prp perfreplay.go:660 Site   : Evil Corp
@@ -359,5 +366,41 @@ $ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-965
 2020-12-07 15:35:10 INFO prp perfreplay.go:484 workerMem: launched
 ```
 
-At this time only CPU (`stat`) and memory (`meminfo`) are being replayed. The
-replay ticks at the exact same frequency as the collection.
+At this time only CPU (`stat`), disk (`diskstat`) and memory (`meminfo`) are
+being replayed. The replay ticks at the exact same frequency as the collection.
+
+The replay tool requires two files to be provided in order to replay. It needs
+CPU training data and a disk mapper file respectively.
+
+The training data must be created on the TARGET system with the
+`perfcpumeasure` tool as described above.
+
+The disk mapper file must be human generated. It contains a mapping between
+source system disks and target system mount points. In addition it requires the
+human to provide the size of the read file. The read file is used to simulate
+reads and MUST be large enough to accommodate the largest read in the data set.
+
+Here is an example `diskmapper.json` file:
+```
+{"siteid":1,"host":0,"devicename":"sda1","mountpoint":"/home/dm/sda1","readsize":"100 mib"}
+{"siteid":1,"host":0,"devicename":"sda2","mountpoint":"/home/dm/sda2","readsize":"100 mib"}
+{"siteid":1,"host":0,"devicename":"sdb1","mountpoint":"/home/dm/sdb1","readsize":"100 mib"}
+```
+
+In this particular case the `perfreplay` tool creates 3 read files of 100 MiB
+each in the provided mount points. The mount points MUST exist and be
+directories prior to invoking the tool. Obviously, if you want to run IO to
+different disks the mount points must be mounted and point to different disks.
+This gives the operator all degrees of freedom needed to setup the IO replay.
+
+If a mapping is not found the tool will complain once but will NOT exit. The
+idea here is that, for example, `sda` is the raw device and it will have the
+cumulative totals of all partitions. The tool will print something out along
+these lines:
+```
+2021-01-31 22:01:46 ERROR prp perfreplay.go:733 disk mapping not found: sda
+2021-01-31 22:01:46 ERROR prp perfreplay.go:733 disk mapping not found: sdb
+```
+
+This error message exists in order to help the operator decide if additional
+mappings should be created.

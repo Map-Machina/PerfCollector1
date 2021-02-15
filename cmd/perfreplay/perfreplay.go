@@ -72,7 +72,7 @@ Flags:
   --sitename string
         Site name, e.g. "Evil Database Site"
   --license string
-        License string, e.g. "6f37-6904-1f83-92f4-595a-0efd"
+        Optional license string, e.g. "6f37-6904-1f83-92f4-595a-0efd". If it is not used the tool assumes an unencrypted journal.
   --cache JSON
 	JSON file that will cache values. This is used to create caches such as the NIC speed.
   --host unsigned integer
@@ -196,11 +196,6 @@ func loadConfig() (*config, []string, error) {
 
 	if cfg.SiteName == "" {
 		fmt.Fprintln(os.Stderr, "Must provide --sitename")
-		os.Exit(1)
-	}
-
-	if cfg.License == "" {
-		fmt.Fprintln(os.Stderr, "Must provide --license")
 		os.Exit(1)
 	}
 
@@ -658,7 +653,9 @@ func _main() error {
 	log.Infof("Version %s (Go version %s %s/%s)", versionString(),
 		runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	log.Infof("Site   : %v", cfg.SiteName)
-	log.Infof("License: %v", cfg.License)
+	if cfg.License != "" {
+		log.Infof("License: %v", cfg.License)
+	}
 	log.Infof("Site ID: %v", cfg.Site)
 	log.Infof("Host ID: %v", cfg.Host)
 	log.Infof("Run ID : %v", cfg.Run)
@@ -690,14 +687,33 @@ func _main() error {
 
 	// Detect how many systems we have to replay and at what frequency.
 	var freq time.Duration
+	if cfg.License == "" {
+		jd = json.NewDecoder(f)
+	}
 	seen := make(map[string]struct{}, 16)
 	for {
-		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
-		if err != nil {
-			if err == io.EOF {
-				break
+		var (
+			wc  *journal.WrapPCCollection
+			err error
+		)
+		if cfg.License != "" {
+			wc, err = journal.ReadEncryptedJournalEntry(f, aead)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
 			}
-			return err
+		} else {
+			var wrap journal.WrapPCCollection
+			err = jd.Decode(&wrap)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+			wc = &wrap
 		}
 
 		if wc.Site != cfg.Site || wc.Host != cfg.Host ||
@@ -749,12 +765,28 @@ func _main() error {
 
 	timer := time.NewTimer(freq)
 	for {
-		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
-		if err != nil {
-			if err == io.EOF {
-				break
+		var (
+			wc  *journal.WrapPCCollection
+			err error
+		)
+		if cfg.License != "" {
+			wc, err = journal.ReadEncryptedJournalEntry(f, aead)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
 			}
-			return err
+		} else {
+			var wrap journal.WrapPCCollection
+			err = jd.Decode(&wrap)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+			wc = &wrap
 		}
 
 		if wc.Site != cfg.Site || wc.Host != cfg.Host ||

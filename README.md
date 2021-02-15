@@ -187,7 +187,7 @@ installed.
 
 For example:
 ```
-$ perfcollector_script/x.sh > xx.json
+$ perfcollector_script.sh > xx.json
 ```
 
 Just let it sit for a while and hit `ctrl-c` to stop collecting data.

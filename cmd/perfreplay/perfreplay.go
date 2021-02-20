@@ -54,12 +54,12 @@ type config struct {
 	SiteName    string
 	License     string
 	InputFile   string
-	Output      string
-	Training    string
-	DiskMapper  string
-	Site        uint64
-	Host        uint64
-	Run         uint64
+	//Output      string
+	Training   string
+	DiskMapper string
+	Site       uint64
+	Host       uint64
+	Run        uint64
 }
 
 func usage() {
@@ -87,7 +87,7 @@ Flags:
   --input string
 	Input file, e.g. ~/journal
   --output string
-	Output file, e.g. ~/replay.json
+	Output file, e.g. ~/replay.json (NOT USED AT THIS TIME)
   --training string
 	Training data file, e.g. ~/training.json
   --diskmapper string
@@ -108,7 +108,7 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.StringVar(&c.SiteName, "sitename", "", "")
 	fs.StringVar(&c.License, "license", "", "")
 	fs.StringVar(&c.InputFile, "input", "", "")
-	fs.StringVar(&c.Output, "output", "", "")
+	//fs.StringVar(&c.Output, "output", "", "")
 	fs.StringVar(&c.Training, "training", "", "")
 	fs.StringVar(&c.DiskMapper, "diskmapper", "", "")
 	fs.Uint64Var(&c.Site, "siteid", 0, "")
@@ -208,17 +208,17 @@ func loadConfig() (*config, []string, error) {
 	}
 	cfg.InputFile = cleanAndExpandPath(cfg.InputFile)
 
-	if cfg.Output == "" {
-		fmt.Fprintln(os.Stderr, "Must provide --output")
-		os.Exit(1)
-	}
-	cfg.Output = cleanAndExpandPath(cfg.Output)
+	//if cfg.Output == "" {
+	//	fmt.Fprintln(os.Stderr, "Must provide --output")
+	//	os.Exit(1)
+	//}
+	//cfg.Output = cleanAndExpandPath(cfg.Output)
 
 	if cfg.Training == "" {
 		fmt.Fprintln(os.Stderr, "Must provide --training")
 		os.Exit(1)
 	}
-	cfg.Output = cleanAndExpandPath(cfg.Training)
+	cfg.Training = cleanAndExpandPath(cfg.Training)
 
 	if cfg.Cache != "" {
 		cfg.Cache = cleanAndExpandPath(cfg.Cache)

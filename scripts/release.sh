@@ -38,6 +38,7 @@ for i in $SYS; do
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perflicense
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfprocessord
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfreplay
+    cp ../../cmd/perfcollector_script/perfcollector_script.sh .
     cd ..
     if [[ $OS = "windows" ]]; then
 	zip -r $PACKAGE-$i-$TAG.zip $PACKAGE-$i-$TAG

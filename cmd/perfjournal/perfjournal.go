@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -56,9 +57,9 @@ Flags:
   --siteid unsigned integer
 	Numerical site id, e.g. 1
   --sitename string
-        Site name, e.g. "Evil Database Site"
+        Site name (required for encrypted captures), e.g. "Evil Database Site"
   --license string
-        License string, e.g. "6f37-6904-1f83-92f4-595a-0efd"
+        License string (required for encrypted captures), e.g. "6f37-6904-1f83-92f4-595a-0efd"
   --cache JSON
 	JSON file that will cache values. This is used to create caches such as the NIC speed.
   --input string
@@ -169,16 +170,6 @@ func loadConfig() (*config, []string, error) {
 
 	if cfg.SiteID == 0 {
 		fmt.Fprintln(os.Stderr, "Must provide --siteid")
-		os.Exit(1)
-	}
-
-	if cfg.SiteName == "" {
-		fmt.Fprintln(os.Stderr, "Must provide --sitename")
-		os.Exit(1)
-	}
-
-	if cfg.License == "" {
-		fmt.Fprintln(os.Stderr, "Must provide --license")
 		os.Exit(1)
 	}
 
@@ -537,11 +528,22 @@ func _main() error {
 		return err
 	}
 
-	// Generate journal key from license material. There is no function for
-	// this in order to obfuscate this terrible trick.
-	aead, err := journal.CreateAEAD(cfg.SiteID, cfg.License, cfg.SiteName)
-	if err != nil {
-		return fmt.Errorf("could not setup aead: %v", err)
+	var (
+		aead     cipher.AEAD
+		encypted bool
+	)
+	if cfg.License == "" || cfg.SiteName == "" {
+		fmt.Printf("license and/or sitename not used, asuming " +
+			"cleartext capture")
+	} else {
+		// Generate journal key from license material. There is no
+		// function for this in order to obfuscate this terrible trick.
+		aead, err = journal.CreateAEAD(cfg.SiteID, cfg.License,
+			cfg.SiteName)
+		if err != nil {
+			return fmt.Errorf("could not setup aead: %v", err)
+		}
+		encypted = true
 	}
 
 	type modeT int
@@ -587,6 +589,11 @@ func _main() error {
 		return fmt.Errorf("input: %v", err)
 	}
 
+	var jr *json.Decoder
+	if !encypted {
+		jr = json.NewDecoder(f)
+	}
+
 	// Pre-process
 	switch mode {
 	case modeJSON:
@@ -605,7 +612,14 @@ func _main() error {
 	start := time.Now()
 	s := time.Now().Add(5 * time.Second)
 	for {
-		wc, err := journal.ReadEncryptedJournalEntry(f, aead)
+		var wc *journal.WrapPCCollection
+		if encypted {
+			wc, err = journal.ReadEncryptedJournalEntry(f, aead)
+		} else {
+			var w journal.WrapPCCollection
+			wc = &w
+			err = jr.Decode(&w)
+		}
 		if err != nil {
 			if err == io.EOF {
 				break

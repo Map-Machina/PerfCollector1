@@ -376,7 +376,7 @@ The `perfreplay` replay tool executes an attempted replica of the load found in
 a journal. Again note that `host` and `run` must match earlier collected CPU
 execution speeds.
 ```
-$ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --output=- --log=prp=DEBUG --training=training.json --diskmapper=diskmapper.json
+$ perfreplay --siteid=1 --sitename='Evil Corp' --license=6f37-6910-b2a0-e858-9657-f08d --input=~/.perfprocessord/data/journal --host=0 --run=0 --log=prp=DEBUG --training=training.json --diskmapper=diskmapper.json
 2020-12-07 15:35:10 INFO prp perfreplay.go:657 Start of day
 2020-12-07 15:35:10 INFO prp perfreplay.go:658 Version 1.0.0 (Go version go1.15.5 linux/amd64)
 2020-12-07 15:35:10 INFO prp perfreplay.go:660 Site   : Evil Corp
@@ -392,7 +392,7 @@ If `--sitename` and `--license` are ommited the tool assumes that the input file
 
 For example:
 ```
-$ perfreplay --siteid=1 --host=0 --run=0 --input=xx.json --output=replay.json --training=training.json --diskmapper=diskmapper.json
+$ perfreplay --siteid=1 --host=0 --run=0 --input=xx.json --training=training.json --diskmapper=diskmapper.json
 ```
 
 At this time only CPU (`stat`), disk (`diskstat`) and memory (`meminfo`) are

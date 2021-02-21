@@ -332,6 +332,13 @@ type PCCollection struct {
 }
 ```
 
+All of the above is true and can be run on unencrypted data that was captured
+using `perfcollector_script` by omitting `--sitename` and `--license`. For
+example:
+```
+$ perfjournal --siteid=1 --input unencrypted_capture.json --output=cooked_data.json --mode=json
+```
+
 ## perfcpumeasure
 
 The `perfcpumeasure` tool is used to collect CPU "unit" execution speeds for

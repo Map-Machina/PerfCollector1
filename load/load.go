@@ -369,12 +369,22 @@ func DiskWrite(parent context.Context, maxDuration time.Duration, filename strin
 	//if err != nil {
 	//	return 0, 0, err
 	//}
-	block := make([]byte, size)
+
+	// XXX it looks like misaligned block allocations cause the write to
+	// fail because of O_DIRECT. For some reason rounding up to k size
+	// (even x512) seems to work arounf this.
+	// The caller should handle this but force it here just in case.
+	var block []byte
+	if size/512%2 == 0 {
+		block = make([]byte, size)
+	} else {
+		block = make([]byte, size+512)
+	}
 
 	// Work
 	start := time.Now()
 	f, err := os.OpenFile(filename,
-		os.O_CREATE|os.O_TRUNC|os.O_SYNC|os.O_WRONLY|syscall.O_DIRECT,
+		os.O_CREATE|os.O_TRUNC|syscall.O_DSYNC|os.O_WRONLY|syscall.O_DIRECT,
 		0644)
 	if err != nil {
 		return 0, 0, err

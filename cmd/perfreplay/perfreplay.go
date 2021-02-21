@@ -651,7 +651,13 @@ func loadDisk(ctx context.Context, mode modeRW, ds database.Diskstat) {
 		size = 1
 	}
 	size <<= 9 // In blocks
-	log.Tracef("%v mode %v ios %v size %v b %v", ds.Name, ms, ios, size, b)
+	var msg string
+	if size/512%2 != 0 {
+		msg = " force aligned"
+		size += 512
+	}
+	log.Tracef("%v mode %v ios %v size %v b %v%v",
+		ds.Name, ms, ios, size, b, msg)
 
 	// Hit it
 	timeout := time.Duration(frequency) * time.Second

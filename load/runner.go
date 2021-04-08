@@ -217,7 +217,7 @@ func (w *Worker) Train(verbose bool) (map[int]int, error) {
 		60: {low: 58, high: 62},
 		70: {low: 68, high: 72},
 		80: {low: 78, high: 82},
-		90: {low: 88, high: 92},
+		90: {low: 88, high: 95},
 	}
 
 	// Sort for user pleasure

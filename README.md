@@ -91,6 +91,21 @@ environment by doing this:
 echo "export GOPRIVATE=github.com/businessperformancetuning/*" >> ~/.bashrc
 ```
 
+While not strictly needed it may help to use identical build systems everywhere
+By default our build systems use `GOPATH`. Run this command to set `GOPATH` to
+`~/gopath`:
+```
+echo "export GOPATH=~/gopath >> ~/.bashrc
+```
+
+And finally it makes life much easier to add `GOPATH` to the `PATH` so that you
+don't have to specify the directory where it was built and/or copy binaries
+around (which ALWAYS ends in tears):
+```
+echo "export PATH=$PATH:$GOPATH/bin" >> ~/.bashrc
+
+```
+
 NOTE: Don't forget to logout and back in for it to take affect!
 
 ## Compiling tools

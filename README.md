@@ -74,6 +74,25 @@ This is OS specific. Most Linux distros have some sort of installer.
 Here is an example to install it on RHEL8:
 https://computingforgeeks.com/how-to-install-go-on-rhel-8/
 
+Because we use github in strange and surprising ways (a.k.a., not open source)
+we must add some environment variables and settings in order for it to know how
+to retrieve modules.
+
+First we need to tell go to not use `https` to retrieve modules by running the
+following command:
+```
+git config --global --add url."git@github.com:".insteadOf "https://github.com/"
+```
+
+Then we need to add a `GOPRIVATE` environment variable to indicate that the
+license code is indeed hidden in a private repo. Add this permanently to your
+environment by doing this:
+```
+echo "export GOPRIVATE=github.com/businessperformancetuning/*" >> ~/.bashrc
+```
+
+NOTE: Don't forget to logout and back in for it to take affect!
+
 ## Compiling tools
 
 This example expects `$GOPATH` to be set per the installation section.

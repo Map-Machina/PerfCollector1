@@ -1,0 +1,172 @@
+3 June 2021
+
+- Disable the hypervised processors:
+
+	Find the CPU/Threads:
+	grep -H . /sys/devices/system/cpu/cpu*/topology/thread_siblings_list
+
+	Logically turning processors on and off:
+	
+	You have to be superuser to perform this bit of magic:
+	sudo su
+
+	Turn off:
+	echo 0 > /sys/devices/system/cpu/cpu6/online
+	grep "processor" /proc/cpuinfo
+
+	Turn on:
+	echo 1 > /sys/devices/system/cpu/cpu6/online
+	grep "processor" /proc/cpuinfo
+
+3. Setup postgres from the CentOS Repositories
+
+	Please note: Bad things happen if you combine methods, where you work from the
+	CentOS repositories and the Postgres repositories, it gets confused.
+
+	a. Install PostgreSQL on CentOS
+	sudo yum install postgresql-server postgresql-contrib
+
+	b. Initialize the database
+	sudo postgresql-setup initdb
+
+	c. Start the database
+	sudo systemctl start postgresql
+
+	d. Enable postgresql after every reboot
+	sudo systemctl enable postgres
+
+	Alternative method for installation using the PostgreSQL repository
+	https://www.hostinger.com/tutorials/how-to-install-postgresql-on-centos-7/
+
+	No users are created at this point.  To create a new user:
+
+	e. login:
+	sudo -u postgres -i
+	psql
+
+	f. Create a new user:
+	CREATE USER name;
+
+	g. Confirm the creation of the new user
+	\du
+
+	h. Grant the new user SUPERUSER priviledges:
+	ALTER USER <user name> With SUPERUSER
+
+		This grants superuser.  There are other levels available.
+
+	i. Create a database:
+	
+	mydb001
+
+	CREATE DATABASE <name> OWNER <user name> TEMPLATE <template1 and template0 are available with install>
+	ENCODING <didn't try this yet, let it default> LC_COLLATE <again, didn't try, let it default> 
+	TABLESPACE <default again> CONNECTION LIMIT <i used 10 as default is unlimited>
+
+4. Verify that pgbench is working by initializing as the user running the test (the user created in postgres)
+
+	pgbench -i [option...] [dbname]
+
+	-i : initializes the tables needed to run a test
+	-c N : Number of clients simulated
+	-t N : Number of transactions
+	-T N : Time limit
+	-f : Specify a custom script
+	-b : built in script (use -b tpcb-like)
+	-j N : Number of worker threads within pgbench
+	
+	a. Run an initialization test
+	Exit psql \q
+	exit as postgres superuser
+	exit
+	
+	pgbench -i -p 5432 -d -s 10 <name of the database that was created>
+	
+	If pgbench is able to initialize under the user that is running the test we are good.
+
+5. Get the tool installed
+
+	a. untar the folder
+
+	b. Set the permissions of the files in the bin folder:
+	chmod 750 *.*
+
+	c. Copy the launch script into each machine.
+
+	d. Change the permissions of the script:
+	chmod 750 <name of the script>.sh
+	
+	e. Set the keys:
+	ssh-keygen -t ed25519
+	ssh-keygen -l -f ~/.ssh/id_ed25519 -t SHA256
+
+	f. Collect the MAC addresses:
+	ifconfig
+
+	g. Create the licenses:
+	perflicense licenseadd siteid=1 sitename="Evil Database App" mac="<MAC Addresses>" duration=10 user=1
+
+	h. Execute perfcollectord (you will get an error).
+
+	i. Execute perfprocessord (you will get an error).
+
+	j. Create the perfprocessord.conf file:
+		
+	cd .perfprocessord
+	vi perfprocessord.conf
+
+insert the following lines into perfprocessord.conf
+
+sshid=~/.ssh/id_ed25519
+
+# Enable journal mode
+journal=1
+
+hosts=1:0/127.0.0.1:2222
+
+siteid=1
+sitename=Evil Database App
+license=<specific license number>
+
+	k. Create the prefcollectord.conf file:
+
+	cd .perfcollectord
+	vi perfcollectord.conf
+
+insert the following lines into perfcollectord.conf
+
+sshid=~/.ssh/id_ed25519
+listen=127.0.0.1:2222
+allowedkeys=<specific key>
+
+##############################
+# Machine Specific Information
+##############################
+
+############
+# Decryption
+############
+
+perfjournal --siteid=1 --sitename='Evil Database App' --license=6f37-6a43-460a-1ceb-1bad-296a --input ~/.perfprocessord/data/journal --output=~/demo --mode=csv -v
+
+############
+# training
+############
+
+perfcpumeasure --siteid=1 --host=0 -v > training.json
+
+
+##############
+# replaying
+##############
+
+perfreplay --siteid=1 --sitename='Evil Database App' --license=6f37-6a43-460a-1ceb-1bad-296a --input=~/.perfprocessord/data/journal --host=0 --run=0 --log=prp=DEBUG --training=training.json --diskmapper=diskmapper.json
+
+
+#############################
+# contents of diskmapper file
+#############################
+
+{"siteid":1,"host":0,"devicename":"sda1","mountpoint":"/home/dm/sda1","readsize":"100 mib"}
+{"siteid":1,"host":0,"devicename":"sda2","mountpoint":"/home/dm/sda2","readsize":"100 mib"}
+{"siteid":1,"host":0,"devicename":"sdb1","mountpoint":"/home/dm/sdb1","readsize":"100 mib"}

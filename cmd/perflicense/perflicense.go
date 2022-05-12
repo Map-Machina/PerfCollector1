@@ -16,14 +16,13 @@ import (
 	"github.com/businessperformancetuning/license/cmd/licensed/database/postgres"
 	"github.com/businessperformancetuning/license/license"
 	"github.com/businessperformancetuning/perfcollector/util"
-	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
 )
 
 var (
 	re = regexp.MustCompile("^([0-9a-fA-F][0-9a-fA-F]:){5}([0-9a-fA-F][0-9a-fA-F])$")
 
-	homeDir           = dcrutil.AppDataDir("perflicense", false)
+	homeDir           = filepath.Join(os.Getenv("HOME"), ".perflicense")
 	defaultConfigFile = filepath.Join(homeDir, "perflicense.conf")
 
 	defaultDB = "postgres"

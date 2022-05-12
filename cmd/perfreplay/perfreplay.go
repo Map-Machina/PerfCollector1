@@ -24,7 +24,6 @@ import (
 	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/businessperformancetuning/perfcollector/util"
-	"github.com/decred/dcrd/dcrutil"
 	"github.com/dustin/go-humanize"
 	"github.com/jrick/flagfile"
 	"github.com/juju/loggo"
@@ -35,7 +34,7 @@ const (
 )
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("perfreplay", false)
+	defaultHomeDir    = filepath.Join(os.Getenv("HOME"), "perfreplay")
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfreplay.conf")
 
 	log = loggo.GetLogger("prp")

@@ -13,13 +13,12 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/util"
-	"github.com/decred/dcrd/dcrutil"
 	"github.com/inhies/go-bytesize"
 	"github.com/jrick/flagfile"
 )
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("perfload", false)
+	defaultHomeDir    = filepath.Join(os.Getenv("HOME"), ".perfload")
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfload.conf")
 )
 

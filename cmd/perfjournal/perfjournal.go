@@ -16,12 +16,11 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
 	"github.com/businessperformancetuning/perfcollector/parser"
-	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
 )
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("perfjournal", false)
+	defaultHomeDir    = filepath.Join(os.Getenv("HOME"),".perfjournal")
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfjournal.conf")
 )
 

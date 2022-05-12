@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
 )
 
@@ -16,7 +15,7 @@ import (
 // s/skeleton/myappname/g to prep.
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("skeleton", false)
+	defaultHomeDir    = filepath.Join(os.Getenv("HOME"), "skeleton")
 	defaultConfigFile = filepath.Join(defaultHomeDir, "skeleton.conf")
 )
 

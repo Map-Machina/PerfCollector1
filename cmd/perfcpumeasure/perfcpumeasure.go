@@ -13,12 +13,11 @@ import (
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfcpumeasure/training"
 	"github.com/businessperformancetuning/perfcollector/load"
-	"github.com/decred/dcrd/dcrutil"
 	"github.com/jrick/flagfile"
 )
 
 var (
-	defaultHomeDir    = dcrutil.AppDataDir("perfcpumeasure", false)
+	defaultHomeDir    = filepath.Join(os.Getenv("HOME"),".perfcpumeasure")
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfcpumeasure.conf")
 )
 

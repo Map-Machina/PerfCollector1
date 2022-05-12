@@ -2,8 +2,7 @@ package sharedconfig
 
 import (
 	"path/filepath"
-
-	"github.com/decred/dcrd/dcrutil"
+	"os"
 )
 
 const (
@@ -13,7 +12,7 @@ const (
 
 var (
 	// DefaultHomeDir points to logdump ui daemon home directory
-	DefaultHomeDir = dcrutil.AppDataDir("perfcollectord", false)
+	DefaultHomeDir = filepath.Join(os.Getenv("$HOME"),".perfcollectord")
 
 	// DefaultConfigFile points to perfcollectord daemon configuration file
 	DefaultConfigFile = filepath.Join(DefaultHomeDir, DefaultConfigFilename)

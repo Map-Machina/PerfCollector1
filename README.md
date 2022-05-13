@@ -131,6 +131,8 @@ bit. The 32 bit version is built but should not be used unless necessary.
 
 ## Installation
 
+*Note that there are 4 tar files. DO NOT EVER SEND A -mapmachina- TARBALL TO A CUSTOMER SITE. It contains perflicense which MAY NOT end up on a customer system!!*
+
 Copy the tar file to the target systems and untar it. For example:
 ```
 $ scp perfcollector-linux-amd64-20201206-01.tar.gz myprocessormachine:

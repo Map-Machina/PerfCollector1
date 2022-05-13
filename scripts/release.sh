@@ -1,5 +1,6 @@
 #!/bin/sh
-
+#set -x
+set -e
 # Simple bash script to build perfcollector binaries.
 
 COMMIT=`git rev-parse --short HEAD`
@@ -30,21 +31,33 @@ for i in $SYS; do
     ARCH=$(echo $i | cut -f2 -d-)
     mkdir $PACKAGE-$i-$TAG
     cd $PACKAGE-$i-$TAG
-    echo "Building:" $OS $ARCH
+    echo "Building customer tarball:" $OS $ARCH
 # Add CGO_ENABLED=0 so that the files are statically linked
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfcollectord
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfcpumeasure
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfjournal
-    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perflicense
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfprocessord
     env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perfreplay
     cp ../../cmd/perfcollector_script/perfcollector_script.sh .
     cd ..
     if [[ $OS = "windows" ]]; then
-	zip -r $PACKAGE-$i-$TAG.zip $PACKAGE-$i-$TAG
+	zip -r $PACKAGE-customer-$i-$TAG.zip $PACKAGE-$i-$TAG
     else
-	tar -cvzf $PACKAGE-$i-$TAG.tar.gz $PACKAGE-$i-$TAG
+	tar -cvzf $PACKAGE-customer-$i-$TAG.tar.gz $PACKAGE-$i-$TAG
     fi
+
+# Add perflicense
+    echo "Building mapmachina tarball:" $OS $ARCH
+    cd $PACKAGE-$i-$TAG
+    env CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags "${FLAGS}" github.com/businessperformancetuning/perfcollector/cmd/perflicense
+    cd ..
+    if [[ $OS = "windows" ]]; then
+	zip -r $PACKAGE-mapmachina-$i-$TAG.zip $PACKAGE-$i-$TAG
+    else
+	tar -cvzf $PACKAGE-mapmachina-$i-$TAG.tar.gz $PACKAGE-$i-$TAG
+    fi
+
+# Cleanup
     rm -r $PACKAGE-$i-$TAG
 done
 

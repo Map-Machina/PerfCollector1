@@ -1,0 +1,4 @@
+73b62669f03518d4c1523ac4cd9f4d6e864ef594c712c67590424516567cf100  perfcollector-customer-linux-386-20220513-01.tar.gz
+d8c4eaa88ced64a149b35dadf6b463833969e813793e256b23c6da05f9405414  perfcollector-customer-linux-amd64-20220513-01.tar.gz
+4a9b8af0882c9a188debd3cd4654468ca4b9b0ebdb450fd3811674ea46314ba2  perfcollector-mapmachina-linux-386-20220513-01.tar.gz
+da960df59b16fd03f118439e86807e71958431fecaf6c835058e987b71e8d892  perfcollector-mapmachina-linux-amd64-20220513-01.tar.gz

@@ -1,6 +1,6 @@
 module github.com/businessperformancetuning/perfcollector
 
-go 1.17
+go 1.21
 
 require (
 	github.com/businessperformancetuning/license v0.0.0-20200906222609-033acf99a883

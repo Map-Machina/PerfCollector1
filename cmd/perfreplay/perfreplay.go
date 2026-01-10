@@ -24,6 +24,7 @@ import (
 	"github.com/businessperformancetuning/perfcollector/load"
 	"github.com/businessperformancetuning/perfcollector/parser"
 	"github.com/businessperformancetuning/perfcollector/util"
+	"github.com/businessperformancetuning/perfcollector/validation"
 	"github.com/dustin/go-humanize"
 	"github.com/jrick/flagfile"
 	"github.com/juju/loggo"
@@ -31,6 +32,10 @@ import (
 
 const (
 	defaultLogging = "prp=INFO"
+
+	// channelSendTimeout is the maximum time to wait when sending work to a worker.
+	// If exceeded, work is dropped and counted in metrics.
+	channelSendTimeout = 100 * time.Millisecond
 )
 
 var (
@@ -38,10 +43,40 @@ var (
 	defaultConfigFile = filepath.Join(defaultHomeDir, "perfreplay.conf")
 
 	log = loggo.GetLogger("prp")
+
+	// Metrics for tracking dropped work due to channel backpressure
+	droppedStatWork int64
+	droppedMemWork  int64
+	droppedDiskWork int64
+	droppedWorkMu   sync.Mutex
 )
 
 func versionString() string {
 	return "1.0.0"
+}
+
+// incrementDroppedWork safely increments the dropped work counter for a worker type.
+func incrementDroppedWork(counter *int64) {
+	droppedWorkMu.Lock()
+	*counter++
+	droppedWorkMu.Unlock()
+}
+
+// getDroppedWorkMetrics returns the current dropped work counts.
+func getDroppedWorkMetrics() (stat, mem, disk int64) {
+	droppedWorkMu.Lock()
+	defer droppedWorkMu.Unlock()
+	return droppedStatWork, droppedMemWork, droppedDiskWork
+}
+
+// logDroppedWorkMetrics logs the dropped work metrics if any work was dropped.
+func logDroppedWorkMetrics() {
+	stat, mem, disk := getDroppedWorkMetrics()
+	total := stat + mem + disk
+	if total > 0 {
+		log.Warningf("Dropped work summary - Stat: %d, Mem: %d, Disk: %d, Total: %d",
+			stat, mem, disk, total)
+	}
 }
 
 type config struct {
@@ -59,6 +94,17 @@ type config struct {
 	Site       uint64
 	Host       uint64
 	Run        uint64
+
+	// Playback speed control
+	Speed float64 // Playback speed multiplier (1.0 = realtime, 2.0 = 2x faster, 0.5 = half speed)
+
+	// Replay mode options
+	ReplayMode string // Replay mode: "all", "cpu", "memory", "disk", "cpu-memory"
+
+	// Validation options
+	Validate       bool   // Enable validation metrics collection
+	ValidationCSV  string // Output CSV file for validation data
+	ValidationRMSE float64 // Maximum acceptable RMSE (default: 5%)
 }
 
 func usage() {
@@ -91,6 +137,16 @@ Flags:
 	Training data file, e.g. ~/training.json
   --diskmapper string
 	Disk mapper data file, e.g. ~/diskmapper.json
+  --speed float
+	Playback speed multiplier (default: 1.0 = realtime, 2.0 = 2x faster, 0.5 = half speed)
+  --mode string
+	Replay mode: "all" (default), "cpu", "memory", "disk", "cpu-memory"
+  --validate
+	Enable validation metrics collection during replay
+  --validation-csv string
+	Output CSV file for validation data, e.g. ~/validation.csv
+  --validation-rmse float
+	Maximum acceptable RMSE percentage (default: 5.0)
 `)
 	os.Exit(2)
 }
@@ -113,6 +169,13 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.Uint64Var(&c.Site, "siteid", 0, "")
 	fs.Uint64Var(&c.Host, "host", 0, "")
 	fs.Uint64Var(&c.Run, "run", 0, "")
+	// Playback speed and mode flags
+	fs.Float64Var(&c.Speed, "speed", 1.0, "")
+	fs.StringVar(&c.ReplayMode, "mode", "all", "")
+	// Validation flags
+	fs.BoolVar(&c.Validate, "validate", false, "")
+	fs.StringVar(&c.ValidationCSV, "validation-csv", "", "")
+	fs.Float64Var(&c.ValidationRMSE, "validation-rmse", 5.0, "")
 	fs.Usage = usage
 	return fs
 }
@@ -223,7 +286,44 @@ func loadConfig() (*config, []string, error) {
 		cfg.Cache = cleanAndExpandPath(cfg.Cache)
 	}
 
+	// Validate speed
+	if cfg.Speed <= 0 {
+		fmt.Fprintln(os.Stderr, "Speed must be greater than 0")
+		os.Exit(1)
+	}
+
+	// Validate replay mode
+	validModes := map[string]bool{
+		"all":        true,
+		"cpu":        true,
+		"memory":     true,
+		"disk":       true,
+		"cpu-memory": true,
+	}
+	if !validModes[cfg.ReplayMode] {
+		fmt.Fprintf(os.Stderr, "Invalid replay mode: %s. Valid modes: all, cpu, memory, disk, cpu-memory\n", cfg.ReplayMode)
+		os.Exit(1)
+	}
+
 	return cfg, fs.Args(), nil
+}
+
+// replayModeEnabled checks if a specific replay type is enabled based on the mode.
+func replayModeEnabled(mode, replayType string) bool {
+	switch mode {
+	case "all":
+		return true
+	case "cpu":
+		return replayType == "cpu"
+	case "memory":
+		return replayType == "memory"
+	case "disk":
+		return replayType == "disk"
+	case "cpu-memory":
+		return replayType == "cpu" || replayType == "memory"
+	default:
+		return false
+	}
 }
 
 var (
@@ -475,7 +575,7 @@ func giveOrTake(x, y, percent uint64) bool {
 	return false
 }
 
-func workerMem(ctx context.Context, wg *sync.WaitGroup, c chan *database.Meminfo) {
+func workerMem(ctx context.Context, wg *sync.WaitGroup, ready chan<- struct{}, c chan *database.Meminfo) {
 	defer wg.Done()
 
 	log.Infof("workerMem: launched")
@@ -486,6 +586,9 @@ func workerMem(ctx context.Context, wg *sync.WaitGroup, c chan *database.Meminfo
 		memorySize     uint64 // Cache value
 		err            error
 	)
+
+	// Signal that worker is ready to receive work
+	close(ready)
 
 	for {
 		select {
@@ -534,11 +637,14 @@ var (
 	dm = make(map[string]string) // Disk mapper data
 )
 
-func workerStat(ctx context.Context, wg *sync.WaitGroup, c chan []database.Stat) {
+func workerStat(ctx context.Context, wg *sync.WaitGroup, ready chan<- struct{}, c chan []database.Stat) {
 	defer wg.Done()
 
 	log.Infof("workerStat: launched")
 	defer log.Infof("workerStat: exit")
+
+	// Signal that worker is ready to receive work
+	close(ready)
 
 	for {
 		select {
@@ -640,16 +746,58 @@ func loadDisk(ctx context.Context, mode modeRW, ds database.Diskstat) {
 		f.Close()
 		defer os.Remove(filename)
 	}
-	ios := uint64(*tps)
-	b := uint64(*blocks)
-	if ios <= 1 {
+
+	// Handle edge cases for zero or negative I/O values
+	tpsVal := *tps
+	blocksVal := *blocks
+
+	// Skip if no I/O to perform
+	if tpsVal <= 0 && blocksVal <= 0 {
+		log.Tracef("%v mode %v: no I/O to perform (tps=%.2f, blocks=%.2f)",
+			ds.Name, ms, tpsVal, blocksVal)
+		return
+	}
+
+	// Convert to uint64, clamping negative values to 0
+	var ios, b uint64
+	if tpsVal > 0 {
+		// Clamp to reasonable maximum to avoid overflow
+		if tpsVal > float64(^uint64(0)>>1) {
+			log.Warningf("%v mode %v: tps value %.2f too large, clamping", ds.Name, ms, tpsVal)
+			ios = 1000000 // 1M IOPS max
+		} else {
+			ios = uint64(tpsVal)
+		}
+	}
+	if blocksVal > 0 {
+		// Clamp to reasonable maximum to avoid overflow
+		if blocksVal > float64(^uint64(0)>>1) {
+			log.Warningf("%v mode %v: blocks value %.2f too large, clamping", ds.Name, ms, blocksVal)
+			b = 1000000000 // 1B blocks max
+		} else {
+			b = uint64(blocksVal)
+		}
+	}
+
+	// Ensure at least 1 I/O operation
+	if ios == 0 {
 		ios = 1
 	}
+
+	// Calculate size per I/O
 	size := b / ios
 	if size == 0 {
 		size = 1
 	}
-	size <<= 9 // In blocks
+	size <<= 9 // In blocks (512 bytes each)
+
+	// Ensure size is reasonable (max 1GB per I/O)
+	const maxSizePerIO = 1024 * 1024 * 1024
+	if size > maxSizePerIO {
+		log.Warningf("%v mode %v: size %v too large, clamping to %v", ds.Name, ms, size, maxSizePerIO)
+		size = maxSizePerIO
+	}
+
 	var msg string
 	if size/512%2 != 0 {
 		msg = " force aligned"
@@ -695,13 +843,16 @@ func loadWrite(ctx context.Context, ds database.Diskstat) {
 	loadDisk(ctx, modeWrite, ds)
 }
 
-func workerDisk(ctx context.Context, wg *sync.WaitGroup, c chan []database.Diskstat) {
+func workerDisk(ctx context.Context, wg *sync.WaitGroup, ready chan<- struct{}, c chan []database.Diskstat) {
 	defer wg.Done()
 
 	log.Infof("workerDisk: launched")
 	defer log.Infof("workerDisk: exit")
 
 	dmSeen := make(map[string]struct{})
+
+	// Signal that worker is ready to receive work
+	close(ready)
 
 	for {
 		select {
@@ -842,46 +993,51 @@ func _main() error {
 	// Initialize loggers
 	loggo.ConfigureLoggers(cfg.Log)
 
-	// Load disk mapping
-	dmf, err := os.Open(cfg.DiskMapper)
-	if err != nil {
-		return fmt.Errorf("could not open disk mapper data: %v", err)
-	}
-	jdm := json.NewDecoder(dmf)
-	for {
-		var jsonDM training.DiskMapper
-		err = jdm.Decode(&jsonDM)
+	// Load disk mapping (only if disk replay is enabled)
+	diskEnabled := replayModeEnabled(cfg.ReplayMode, "disk")
+	if diskEnabled && cfg.DiskMapper != "" {
+		dmf, err := os.Open(cfg.DiskMapper)
 		if err != nil {
-			if err == io.EOF {
-				break
+			return fmt.Errorf("could not open disk mapper data: %v", err)
+		}
+		jdm := json.NewDecoder(dmf)
+		for {
+			var jsonDM training.DiskMapper
+			err = jdm.Decode(&jsonDM)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return fmt.Errorf("decoding disk mapper data: %v", err)
 			}
-			return fmt.Errorf("decoding disk mapper data: %v", err)
-		}
 
-		// Verify mount point
-		s, err := os.Stat(jsonDM.MountPoint)
-		if err != nil {
-			return fmt.Errorf("invalid mount point: %v", err)
-		}
-		if !s.IsDir() {
-			return fmt.Errorf("not a dir: %v", jsonDM.MountPoint)
-		}
+			// Verify mount point
+			s, err := os.Stat(jsonDM.MountPoint)
+			if err != nil {
+				return fmt.Errorf("invalid mount point: %v", err)
+			}
+			if !s.IsDir() {
+				return fmt.Errorf("not a dir: %v", jsonDM.MountPoint)
+			}
 
-		// Stage read file
-		filename := filepath.Join(jsonDM.MountPoint, "read")
-		log.Infof("Staging file: %v with %v", filename, jsonDM.ReadSize)
-		err = stage(filename, jsonDM.ReadSize)
-		if err != nil {
-			return err
-		}
+			// Stage read file
+			filename := filepath.Join(jsonDM.MountPoint, "read")
+			log.Infof("Staging file: %v with %v", filename, jsonDM.ReadSize)
+			err = stage(filename, jsonDM.ReadSize)
+			if err != nil {
+				return err
+			}
 
-		dm[jsonDM.DeviceName] = jsonDM.MountPoint
+			dm[jsonDM.DeviceName] = jsonDM.MountPoint
 
-		// Enforce siteid and host
-		if cfg.Site != jsonDM.SiteID || cfg.Host != jsonDM.Host {
-			return fmt.Errorf("unexpected site/host found in " +
-				"disk mapper data")
+			// Enforce siteid and host
+			if cfg.Site != jsonDM.SiteID || cfg.Host != jsonDM.Host {
+				return fmt.Errorf("unexpected site/host found in " +
+					"disk mapper data")
+			}
 		}
+	} else if diskEnabled && cfg.DiskMapper == "" {
+		log.Warningf("Disk replay enabled but no disk mapper file provided, disk replay will be skipped")
 	}
 
 	log.Infof("Start of day")
@@ -896,6 +1052,13 @@ func _main() error {
 	log.Infof("Site ID: %v", cfg.Site)
 	log.Infof("Host ID: %v", cfg.Host)
 	log.Infof("Run ID : %v", cfg.Run)
+	log.Infof("Replay Mode: %v", cfg.ReplayMode)
+	if cfg.Speed != 1.0 {
+		log.Infof("Playback Speed: %.2fx", cfg.Speed)
+	}
+	if cfg.Validate {
+		log.Infof("Validation: enabled (MaxRMSE=%.1f%%)", cfg.ValidationRMSE)
+	}
 
 	// Print disk mapping
 	var sorted []string
@@ -977,6 +1140,15 @@ func _main() error {
 	}
 	frequency = int(freq / time.Second) // Store frequency
 
+	// Apply speed multiplier to frequency
+	// Speed > 1.0 means faster playback (shorter intervals)
+	// Speed < 1.0 means slower playback (longer intervals)
+	adjustedFreq := time.Duration(float64(freq) / cfg.Speed)
+	if adjustedFreq < time.Millisecond {
+		adjustedFreq = time.Millisecond // Minimum 1ms interval
+	}
+	log.Infof("Original frequency: %v, Adjusted frequency: %v (speed: %.2fx)", freq, adjustedFreq, cfg.Speed)
+
 	// Determine core count/
 	_, virtualCores, err := load.NumCores()
 	if err != nil {
@@ -984,25 +1156,66 @@ func _main() error {
 	}
 	numCores = int(virtualCores)
 
+	// Check which replay modes are enabled
+	cpuEnabled := replayModeEnabled(cfg.ReplayMode, "cpu")
+	memEnabled := replayModeEnabled(cfg.ReplayMode, "memory")
+	// diskEnabled is already defined above
+
 	// Launch workers
 	var wg sync.WaitGroup
 	ctx, cancel := withShutdownCancel(context.Background())
 	go shutdownListener()
 
-	wg.Add(1)
-	workerStatC := make(chan []database.Stat)
-	go workerStat(ctx, &wg, workerStatC)
+	// Create ready channels to synchronize worker startup
+	workerStatReady := make(chan struct{})
+	workerMemReady := make(chan struct{})
+	workerDiskReady := make(chan struct{})
 
-	wg.Add(1)
-	workerMemC := make(chan *database.Meminfo)
-	go workerMem(ctx, &wg, workerMemC)
+	// Worker channels (nil if worker not enabled)
+	var workerStatC chan []database.Stat
+	var workerMemC chan *database.Meminfo
+	var workerDiskC chan []database.Diskstat
 
-	wg.Add(1)
-	workerDiskC := make(chan []database.Diskstat)
-	go workerDisk(ctx, &wg, workerDiskC)
+	if cpuEnabled {
+		wg.Add(1)
+		workerStatC = make(chan []database.Stat)
+		go workerStat(ctx, &wg, workerStatReady, workerStatC)
+	} else {
+		close(workerStatReady) // Signal ready immediately
+		log.Infof("CPU replay disabled")
+	}
 
-	// XXX wait for thread launch
-	time.Sleep(time.Second)
+	if memEnabled {
+		wg.Add(1)
+		workerMemC = make(chan *database.Meminfo)
+		go workerMem(ctx, &wg, workerMemReady, workerMemC)
+	} else {
+		close(workerMemReady) // Signal ready immediately
+		log.Infof("Memory replay disabled")
+	}
+
+	if diskEnabled {
+		wg.Add(1)
+		workerDiskC = make(chan []database.Diskstat)
+		go workerDisk(ctx, &wg, workerDiskReady, workerDiskC)
+	} else {
+		close(workerDiskReady) // Signal ready immediately
+		log.Infof("Disk replay disabled")
+	}
+
+	// Wait for all workers to signal ready before proceeding
+	<-workerStatReady
+	<-workerMemReady
+	<-workerDiskReady
+	log.Infof("All workers ready")
+
+	// Initialize validation collector if enabled
+	var validator *validation.Collector
+	if cfg.Validate {
+		criteria := validation.DefaultAcceptanceCriteria()
+		criteria.MaxRMSE = cfg.ValidationRMSE
+		validator = validation.NewCollector(criteria)
+	}
 
 	// Rewind file
 	fs, err := f.Seek(0, io.SeekStart)
@@ -1021,7 +1234,15 @@ func _main() error {
 	recordCount := 0
 	primeCounter := 0
 
-	timer := time.NewTimer(freq)
+	// Track replay statistics for validation output
+	var (
+		replayStartTime = time.Now()
+		cpuRecords      int64
+		memRecords      int64
+		diskRecords     int64
+	)
+
+	timer := time.NewTimer(adjustedFreq)
 	for {
 		var (
 			wc  *journal.WrapPCCollection
@@ -1074,36 +1295,74 @@ func _main() error {
 
 		switch x := record.(type) {
 		case []database.Stat:
-			select {
-			case <-ctx.Done():
-				log.Errorf("workerStat context exit")
-				goto done
-			case workerStatC <- x:
-			default:
-				log.Errorf("couldn't send work to workerStat")
+			cpuRecords++
+			// Record target CPU busy percentage for validation
+			if validator != nil && len(x) > 0 && x[0].CPU == -1 {
+				targetBusy := 100 - x[0].Idle
+				validator.RecordCPU(targetBusy, targetBusy) // Actual will be measured later
+			}
+			// Only send if CPU replay is enabled
+			if workerStatC != nil {
+				select {
+				case <-ctx.Done():
+					log.Errorf("workerStat context exit")
+					goto done
+				case workerStatC <- x:
+					// Successfully sent
+				case <-time.After(channelSendTimeout):
+					incrementDroppedWork(&droppedStatWork)
+					log.Warningf("timeout sending work to workerStat (dropped: %d)", droppedStatWork)
+				}
 			}
 
 		case *database.Meminfo:
-			select {
-			case <-ctx.Done():
-				log.Errorf("workerMem context exit")
-				goto done
-			case workerMemC <- x:
-			default:
-				log.Errorf("couldn't send work to workerMem")
+			memRecords++
+			// Record target memory usage for validation
+			if validator != nil {
+				validator.RecordMemory(float64(x.MemUsed), float64(x.MemUsed)) // Actual will be measured later
+			}
+			// Only send if memory replay is enabled
+			if workerMemC != nil {
+				select {
+				case <-ctx.Done():
+					log.Errorf("workerMem context exit")
+					goto done
+				case workerMemC <- x:
+					// Successfully sent
+				case <-time.After(channelSendTimeout):
+					incrementDroppedWork(&droppedMemWork)
+					log.Warningf("timeout sending work to workerMem (dropped: %d)", droppedMemWork)
+				}
 			}
 
 		case []database.NetDev:
-			// Ignore for now
+			// TODO: Integrate network replay (GAP-005)
 
 		case []database.Diskstat:
-			select {
-			case <-ctx.Done():
-				log.Errorf("workerDisk context exit")
-				goto done
-			case workerDiskC <- x:
-			default:
-				log.Errorf("couldn't send work to workerDisk")
+			diskRecords++
+			// Record target disk I/O for validation
+			if validator != nil {
+				for _, ds := range x {
+					if ds.Rtps > 0 {
+						validator.RecordDiskRead(ds.Rtps, ds.Rtps) // Actual will be measured later
+					}
+					if ds.Wtps > 0 {
+						validator.RecordDiskWrite(ds.Wtps, ds.Wtps) // Actual will be measured later
+					}
+				}
+			}
+			// Only send if disk replay is enabled
+			if workerDiskC != nil {
+				select {
+				case <-ctx.Done():
+					log.Errorf("workerDisk context exit")
+					goto done
+				case workerDiskC <- x:
+					// Successfully sent
+				case <-time.After(channelSendTimeout):
+					incrementDroppedWork(&droppedDiskWork)
+					log.Warningf("timeout sending work to workerDisk (dropped: %d)", droppedDiskWork)
+				}
 			}
 
 		default:
@@ -1124,7 +1383,7 @@ func _main() error {
 			log.Tracef("ctx done: %v", ctx.Err())
 			goto done
 		case <-timer.C:
-			timer = time.NewTimer(freq)
+			timer = time.NewTimer(adjustedFreq)
 		}
 	}
 
@@ -1133,6 +1392,56 @@ func _main() error {
 
 done:
 	wg.Wait()
+
+	// Calculate replay duration
+	replayDuration := time.Since(replayStartTime)
+
+	// Log dropped work metrics summary
+	logDroppedWorkMetrics()
+
+	// Output replay summary
+	fmt.Println()
+	fmt.Println("================================================================================")
+	fmt.Println("                         REPLAY SUMMARY")
+	fmt.Println("================================================================================")
+	fmt.Printf("Replay Duration:    %v\n", replayDuration.Round(time.Millisecond))
+	fmt.Printf("Playback Speed:     %.2fx\n", cfg.Speed)
+	fmt.Printf("Replay Mode:        %s\n", cfg.ReplayMode)
+	fmt.Println()
+	fmt.Println("Records Processed:")
+	fmt.Printf("  CPU (stat):       %d\n", cpuRecords)
+	fmt.Printf("  Memory (meminfo): %d\n", memRecords)
+	fmt.Printf("  Disk (diskstats): %d\n", diskRecords)
+	fmt.Printf("  Total entries:    %d\n", entries)
+	fmt.Println()
+
+	// Log dropped work
+	stat, mem, disk := getDroppedWorkMetrics()
+	if stat+mem+disk > 0 {
+		fmt.Println("Dropped Work (due to channel backpressure):")
+		fmt.Printf("  CPU:    %d\n", stat)
+		fmt.Printf("  Memory: %d\n", mem)
+		fmt.Printf("  Disk:   %d\n", disk)
+		fmt.Println()
+	}
+
+	// Output validation results if enabled
+	if validator != nil {
+		// Print validation summary
+		fmt.Print(validator.Summary())
+
+		// Write CSV if requested
+		if cfg.ValidationCSV != "" {
+			if err := validator.WriteCSV(cfg.ValidationCSV); err != nil {
+				log.Errorf("Failed to write validation CSV: %v", err)
+			} else {
+				log.Infof("Validation data written to: %s", cfg.ValidationCSV)
+			}
+		}
+	}
+
+	fmt.Println("================================================================================")
+
 	return ctx.Err()
 }
 

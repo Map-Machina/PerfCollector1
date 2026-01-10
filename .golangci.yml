@@ -1,0 +1,41 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  govet:
+    check-shadowing: false
+  goimports:
+    local-prefixes: github.com/businessperformancetuning/perfcollector
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - unparam
+    # Exclude generated files
+    - path: ".*_stub\\.go"
+      linters:
+        - unused
+    # Allow unused parameters in interface implementations
+    - linters:
+        - unparam
+      text: "always receives"

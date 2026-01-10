@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run tests
+        run: |
+          go test -v \
+            ./cmd/perfreplay/... \
+            ./cmd/perfprocessord/... \
+            ./parser/... \
+            ./validation/... \
+            ./util/... \
+            ./channel/...
+
+      - name: Build Linux AMD64
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p dist/perfcollector-${VERSION}-linux-amd64
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-amd64/perfcollectord ./cmd/perfcollectord
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-amd64/perfprocessord ./cmd/perfprocessord
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-amd64/perfreplay ./cmd/perfreplay
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-amd64/perfload ./cmd/perfload
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-amd64/perfjournal ./cmd/perfjournal
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-amd64/perfcpumeasure ./cmd/perfcpumeasure
+          cd dist && tar -czf perfcollector-${VERSION}-linux-amd64.tar.gz perfcollector-${VERSION}-linux-amd64
+
+      - name: Build Linux ARM64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p dist/perfcollector-${VERSION}-linux-arm64
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-arm64/perfcollectord ./cmd/perfcollectord
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-arm64/perfprocessord ./cmd/perfprocessord
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-arm64/perfreplay ./cmd/perfreplay
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-arm64/perfload ./cmd/perfload
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-arm64/perfjournal ./cmd/perfjournal
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o dist/perfcollector-${VERSION}-linux-arm64/perfcpumeasure ./cmd/perfcpumeasure
+          cd dist && tar -czf perfcollector-${VERSION}-linux-arm64.tar.gz perfcollector-${VERSION}-linux-arm64
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

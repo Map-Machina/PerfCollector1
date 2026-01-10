@@ -1,0 +1,101 @@
+2026-01-10 06:18:19 INFO prp perfreplay.go:931 Staging file: /tmp/replay/sda/read with 100M
+2026-01-10 06:18:19 INFO prp perfreplay.go:931 Staging file: /tmp/replay/sdb/read with 100M
+2026-01-10 06:18:19 INFO prp perfreplay.go:931 Staging file: /tmp/replay/sda/read with 100M
+2026-01-10 06:18:20 INFO prp perfreplay.go:931 Staging file: /tmp/replay/sdb/read with 100M
+2026-01-10 06:18:21 INFO prp perfreplay.go:946 Start of day
+2026-01-10 06:18:21 INFO prp perfreplay.go:947 Version 1.0.0 (Go version go1.25.5 linux/amd64)
+2026-01-10 06:18:21 INFO prp perfreplay.go:955 Site ID: 1
+2026-01-10 06:18:21 INFO prp perfreplay.go:956 Host ID: 0
+2026-01-10 06:18:21 INFO prp perfreplay.go:957 Run ID : 0
+2026-01-10 06:18:21 INFO prp perfreplay.go:966 Mapping sda -> /tmp/replay/sda
+2026-01-10 06:18:21 INFO prp perfreplay.go:966 Mapping sda1 -> /tmp/replay/sda
+2026-01-10 06:18:21 INFO prp perfreplay.go:966 Mapping sdb -> /tmp/replay/sdb
+2026-01-10 06:18:21 INFO prp perfreplay.go:966 Mapping sdb1 -> /tmp/replay/sdb
+2026-01-10 06:18:21 INFO prp perfreplay.go:757 workerDisk: launched
+2026-01-10 06:18:21 INFO prp perfreplay.go:593 workerStat: launched
+2026-01-10 06:18:21 INFO prp perfreplay.go:531 workerMem: launched
+2026-01-10 06:18:21 INFO prp perfreplay.go:1072 All workers ready
+2026-01-10 06:18:21 ERROR prp perfreplay.go:787 disk mapping not found: loop0
+2026-01-10 06:18:21 ERROR prp perfreplay.go:787 disk mapping not found: sda14
+2026-01-10 06:18:21 ERROR prp perfreplay.go:787 disk mapping not found: sda15
+2026-01-10 06:18:21 ERROR prp perfreplay.go:787 disk mapping not found: sda16
+2026-01-10 06:18:21 WARNING prp perfreplay.go:1182 timeout sending work to workerMem (dropped: 1)
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 WARNING prp perfreplay.go:1182 timeout sending work to workerMem (dropped: 2)
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 WARNING prp perfreplay.go:1182 timeout sending work to workerMem (dropped: 3)
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 WARNING prp perfreplay.go:1182 timeout sending work to workerMem (dropped: 4)
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sda/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 ERROR prp perfreplay.go:728 diskread /tmp/replay/sdb/read ios 9223372036854775808 size 1024: context deadline exceeded
+2026-01-10 06:18:21 INFO prp perfreplay.go:602 workerStat: exit
+2026-01-10 06:18:21 INFO prp perfreplay.go:768 workerDisk: exit
+2026-01-10 06:18:21 INFO prp perfreplay.go:546 workerMem: exit
+2026-01-10 06:18:21 WARNING prp perfreplay.go:77 Dropped work summary - Stat: 0, Mem: 4, Disk: 0, Total: 4
+context canceled

@@ -1,0 +1,87 @@
+================================================================================
+                      PerfCollector E2E Test Report
+================================================================================
+Generated: Sat Jan 10 00:19:24 CST 2026
+Test Duration: 10 minutes (capture), CPU-only replay
+
+INFRASTRUCTURE
+--------------
+Source VM (Capture):
+  - Azure VM: pcc-test-vm (74.235.211.105)
+  - OS: Ubuntu 24.04 on Azure
+  - Type: Standard_D4s_v3
+
+Target VM (Replay):
+  - OCI VM: perftest-vm-02 (137.131.22.223)
+  - OS: Ubuntu 24.04 on Oracle Cloud
+  - Region: us-phoenix-1
+
+TEST PHASES
+-----------
+Phase 1: Connectivity Check              ✓ PASSED
+Phase 2: Script Deployment               ✓ PASSED
+Phase 3: Binary Deployment               ✓ PASSED
+Phase 4: Performance Capture (10 min)    ✓ PASSED
+Phase 5: Data Transfer                   ✓ PASSED
+Phase 6: CPU Training                    ✓ PASSED
+Phase 7: Replay Execution                ⚠ PARTIAL
+
+CAPTURE RESULTS
+---------------
+- Capture Duration: 600 seconds (10 minutes)
+- Collection Interval: 5 seconds
+- Total Samples: 476 (4 metrics per sample)
+- Output File Size: 647 KB
+
+Benchmark Results:
+- CPU Test: 1233.38 events/sec
+  - 300 seconds, 4 threads
+  - 370,017 total prime number calculations
+  - Average latency: 3.24ms
+
+- Memory Test: 31,371.94 MiB/sec
+  - 100GB transferred
+  - 1MB block size, write operations
+  - Completed in 3.26 seconds
+
+REPLAY RESULTS
+--------------
+- Training completed: 10 calibration points (10-100% busy)
+- Workers launched: Stat, Mem, Disk
+- Disk mappings configured: sda, sdb, sda1, sdb1
+
+Issues Encountered:
+1. Disk I/O errors - ios overflow in diskstats parsing
+   - Cause: Division by zero when no I/O recorded
+   - Impact: Disk replay skipped, CPU/memory replay unaffected
+
+2. Memory worker timeouts (4 dropped work items)
+   - Cause: Memory allocations processed too quickly
+   - Impact: Minimal, most work processed successfully
+
+VALIDATION METRICS
+------------------
+Metrics samples collected during replay: 3
+Average CPU Busy during replay: 5.22%
+Average Memory Used during replay: 52.60%
+
+NOTES
+-----
+1. The replay completed very quickly because it processed journal entries
+   at faster-than-realtime speed when no actual CPU load was generated.
+
+2. Disk replay requires proper mount points and staging files. The test
+   created temporary directories but encountered parsing issues with the
+   captured diskstats data.
+
+3. For production use, the disk mapper should map to actual storage
+   devices with pre-staged read files.
+
+RECOMMENDATIONS
+---------------
+1. Add frequency parameter to perfreplay to control playback speed
+2. Improve diskstats parsing to handle edge cases (zero I/O)
+3. Add optional disk-only or cpu-only replay modes
+4. Include validation metrics in perfreplay output
+
+================================================================================

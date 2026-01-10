@@ -1,0 +1,4 @@
+{"siteid":1,"host":0,"devicename":"sda","mountpoint":"/tmp/replay/sda","readsize":"100M"}
+{"siteid":1,"host":0,"devicename":"sdb","mountpoint":"/tmp/replay/sdb","readsize":"100M"}
+{"siteid":1,"host":0,"devicename":"sda1","mountpoint":"/tmp/replay/sda","readsize":"100M"}
+{"siteid":1,"host":0,"devicename":"sdb1","mountpoint":"/tmp/replay/sdb","readsize":"100M"}

@@ -17,6 +17,14 @@ type Database interface {
 	MeminfoInsert(context.Context, *Meminfo) error    // Insert meminfo record.
 	NetDevInsert(context.Context, []NetDev) error     // Insert netdev record.
 	DiskstatInsert(context.Context, []Diskstat) error // Insert diskstat record.
+
+	// Query methods for data retrieval
+	StatSelect(ctx context.Context, runID uint64) ([]Stat, error)                // Get stat records for a run
+	MeminfoSelect(ctx context.Context, runID uint64) ([]Meminfo, error)          // Get meminfo records for a run
+	NetDevSelect(ctx context.Context, runID uint64) ([]NetDev, error)            // Get netdev records for a run
+	DiskstatSelect(ctx context.Context, runID uint64) ([]Diskstat, error)        // Get diskstat records for a run
+	MeasurementsSelect(ctx context.Context, runID uint64) (*Measurements, error) // Get measurements by run ID
+	ListRuns(ctx context.Context) ([]Measurements, error)                        // List all runs
 }
 
 const (
@@ -49,6 +57,16 @@ VALUES(
 	:hostid
 )
 RETURNING runid;
+`
+	SelectMeasurementsByRunID = `
+SELECT runid, siteid, hostid
+FROM measurements
+WHERE runid = $1;
+`
+	SelectAllMeasurements = `
+SELECT runid, siteid, hostid
+FROM measurements
+ORDER BY runid;
 `
 )
 

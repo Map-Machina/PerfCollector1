@@ -18,7 +18,7 @@ type Diskstat struct {
 	Bdscd float64
 }
 
-// InsertDiskstat inserts a Diskstat record into the database.
+// SQL queries for diskstat table.
 var (
 	InsertDiskstat = `
 INSERT INTO diskstat (
@@ -51,5 +51,11 @@ VALUES(
 	:bwrtn,
 	:bdscd
 );
+`
+	SelectDiskstatByRunID = `
+SELECT runid, timestamp, start, duration, name, tps, rtps, wtps, dtps, bread, bwrtn, bdscd
+FROM diskstat
+WHERE runid = $1
+ORDER BY timestamp, name;
 `
 )

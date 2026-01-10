@@ -18,7 +18,7 @@ type Stat struct {
 	Idle   float64
 }
 
-// InsertStat inserts a stat record into the database.
+// SQL queries for stat table.
 var (
 	InsertStat = `
 INSERT INTO stat (
@@ -49,5 +49,11 @@ VALUES(
 	:steal,
 	:idle
 );
+`
+	SelectStatByRunID = `
+SELECT runid, timestamp, start, duration, cpu, usert, nice, system, iowait, steal, idle
+FROM stat
+WHERE runid = $1
+ORDER BY timestamp, cpu;
 `
 )

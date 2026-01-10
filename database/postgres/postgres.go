@@ -170,6 +170,72 @@ func (p *postgres) DiskstatInsert(ctx context.Context, ds []database.Diskstat) e
 	return tx.Commit()
 }
 
+func (p *postgres) StatSelect(ctx context.Context, runID uint64) ([]database.Stat, error) {
+	log.Tracef("postgres.StatSelect")
+
+	var stats []database.Stat
+	err := p.db.SelectContext(ctx, &stats, database.SelectStatByRunID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.StatSelect: %w", err)
+	}
+	return stats, nil
+}
+
+func (p *postgres) MeminfoSelect(ctx context.Context, runID uint64) ([]database.Meminfo, error) {
+	log.Tracef("postgres.MeminfoSelect")
+
+	var meminfo []database.Meminfo
+	err := p.db.SelectContext(ctx, &meminfo, database.SelectMeminfoByRunID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.MeminfoSelect: %w", err)
+	}
+	return meminfo, nil
+}
+
+func (p *postgres) NetDevSelect(ctx context.Context, runID uint64) ([]database.NetDev, error) {
+	log.Tracef("postgres.NetDevSelect")
+
+	var netdev []database.NetDev
+	err := p.db.SelectContext(ctx, &netdev, database.SelectNetDevByRunID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.NetDevSelect: %w", err)
+	}
+	return netdev, nil
+}
+
+func (p *postgres) DiskstatSelect(ctx context.Context, runID uint64) ([]database.Diskstat, error) {
+	log.Tracef("postgres.DiskstatSelect")
+
+	var diskstat []database.Diskstat
+	err := p.db.SelectContext(ctx, &diskstat, database.SelectDiskstatByRunID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DiskstatSelect: %w", err)
+	}
+	return diskstat, nil
+}
+
+func (p *postgres) MeasurementsSelect(ctx context.Context, runID uint64) (*database.Measurements, error) {
+	log.Tracef("postgres.MeasurementsSelect")
+
+	var m database.Measurements
+	err := p.db.GetContext(ctx, &m, database.SelectMeasurementsByRunID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.MeasurementsSelect: %w", err)
+	}
+	return &m, nil
+}
+
+func (p *postgres) ListRuns(ctx context.Context) ([]database.Measurements, error) {
+	log.Tracef("postgres.ListRuns")
+
+	var measurements []database.Measurements
+	err := p.db.SelectContext(ctx, &measurements, database.SelectAllMeasurements)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.ListRuns: %w", err)
+	}
+	return measurements, nil
+}
+
 func New(name, uri string) (*postgres, error) {
 	log.Tracef("postgres.New")
 

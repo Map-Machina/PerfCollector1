@@ -20,7 +20,7 @@ type Meminfo struct {
 	Dirty         uint64  // kbdirty
 }
 
-// InsertMeminfo inserts a meminfo record into the database.
+// SQL queries for meminfo table.
 var (
 	InsertMeminfo = `
 INSERT INTO meminfo (
@@ -59,5 +59,12 @@ VALUES(
 	:inactive,
 	:dirty
 );
+`
+	SelectMeminfoByRunID = `
+SELECT runid, timestamp, start, duration, memfree, memavailable, memused, percentused,
+       buffers, cached, commit, percentcommit, active, inactive, dirty
+FROM meminfo
+WHERE runid = $1
+ORDER BY timestamp;
 `
 )

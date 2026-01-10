@@ -18,7 +18,7 @@ type NetDev struct {
 	IfUtil       float64 // %ifutil
 }
 
-// InsertNetDev inserts a netdev record into the database.
+// SQL queries for netdev table.
 var (
 	InsertNetDev = `
 INSERT INTO netdev (
@@ -53,5 +53,12 @@ VALUES(
 	:rxmulticast,
 	:ifutil
 );
+`
+	SelectNetDevByRunID = `
+SELECT runid, timestamp, start, duration, name, rxpackets, txpackets, rxkbytes,
+       txkbytes, rxcompressed, txcompressed, rxmulticast, ifutil
+FROM netdev
+WHERE runid = $1
+ORDER BY timestamp, name;
 `
 )

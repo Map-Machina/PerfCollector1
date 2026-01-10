@@ -54,11 +54,12 @@ All tools live in the `cmd` directory.
 * `cmd/perfload` - Generic tool to generate load. This is a development tool and is not built by the release script.
 * `cmd/perfprocessord` - Performance data aggregator and cruncher daemon.
 * `cmd/perfreplay` - Performance data replay tool.
+* `cmd/perfapi` - REST API server for querying stored performance data.
 * `cmd/skeleton` - Skeleton app, do not use. This is not built by the release script.
 
 Other directories
 * `channel` - Library for passing generic data through channels (here be dragons)
-* `database` - Library to interact with SQL databases (currently incomplete/broken)
+* `database` - Library to interact with SQL databases (PostgreSQL supported)
 * `load` - Library that is used for load generation.
 * `parser` - Library that converts raw `/proc` and `/sys` to database and `sar` format.
 * `rpmbuild` - Incomplete scripts to build and rpm to install things as a service.
@@ -469,3 +470,74 @@ these lines:
 
 This error message exists in order to help the operator decide if additional
 mappings should be created.
+
+## perfapi
+
+The `perfapi` tool provides a REST API for querying performance data stored in PostgreSQL.
+
+### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `PERFAPI_LISTEN` | `:8080` | HTTP listen address |
+| `PERFAPI_DB_URI` | `user=postgres dbname=performancedata host=localhost sslmode=disable` | PostgreSQL connection string |
+
+### Running
+
+```bash
+$ export PERFAPI_DB_URI="user=postgres dbname=performancedata host=localhost sslmode=disable"
+$ perfapi
+PerfAPI server listening on :8080
+```
+
+### API Endpoints
+
+#### Health Check
+```
+GET /health
+```
+Returns server health status and database version.
+
+#### List Runs
+```
+GET /api/v1/runs
+```
+Returns all measurement runs.
+
+#### Get Run Data
+```
+GET /api/v1/runs/{runID}
+```
+Returns complete data for a specific run including stats, meminfo, netdev, and diskstat.
+
+#### Get Specific Data Types
+```
+GET /api/v1/runs/{runID}/stats      # CPU statistics
+GET /api/v1/runs/{runID}/meminfo    # Memory statistics
+GET /api/v1/runs/{runID}/netdev     # Network device statistics
+GET /api/v1/runs/{runID}/diskstat   # Disk I/O statistics
+```
+
+#### Export to CSV
+```
+GET /api/v1/runs/{runID}/stats/export      # Download stats as CSV
+GET /api/v1/runs/{runID}/meminfo/export    # Download meminfo as CSV
+GET /api/v1/runs/{runID}/netdev/export     # Download netdev as CSV
+GET /api/v1/runs/{runID}/diskstat/export   # Download diskstat as CSV
+```
+
+### Example Usage
+
+```bash
+# List all runs
+curl http://localhost:8080/api/v1/runs
+
+# Get all data for run 1
+curl http://localhost:8080/api/v1/runs/1
+
+# Get CPU stats for run 1
+curl http://localhost:8080/api/v1/runs/1/stats
+
+# Export stats to CSV
+curl -o stats.csv http://localhost:8080/api/v1/runs/1/stats/export
+```

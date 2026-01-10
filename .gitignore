@@ -16,3 +16,20 @@
 
 # Vim
 *.sw?
+
+# macOS
+.DS_Store
+
+# Build output
+bin/
+perfload
+perfreplay
+perfcpumeasure
+perfcollectord
+perfprocessord
+
+# Local planning and notes
+PROJECT_PLAN.md
+claude.md
+agents/
+analysis/

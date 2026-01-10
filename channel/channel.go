@@ -103,7 +103,11 @@ func Read(ctx context.Context, c interface{}) (interface{}, error) {
 		if !recvOK {
 			return nil, ErrUnexpectedClose
 		}
-		if !recv.IsValid() && recv.IsZero() {
+		// Check for nil pointer values - recv.IsNil() returns true for nil pointers
+		if recv.Kind() == reflect.Ptr && recv.IsNil() {
+			return nil, nil
+		}
+		if !recv.IsValid() {
 			return nil, nil
 		}
 		return recv.Interface(), nil
@@ -131,7 +135,11 @@ func ReadNB(ctx context.Context, c interface{}) (interface{}, error) {
 		if !recvOK {
 			return nil, ErrUnexpectedClose
 		}
-		if !recv.IsValid() && recv.IsZero() {
+		// Check for nil pointer values - recv.IsNil() returns true for nil pointers
+		if recv.Kind() == reflect.Ptr && recv.IsNil() {
+			return nil, nil
+		}
+		if !recv.IsValid() {
 			return nil, nil
 		}
 		return recv.Interface(), nil

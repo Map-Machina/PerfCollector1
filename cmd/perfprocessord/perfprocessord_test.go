@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"testing"
 
 	"github.com/businessperformancetuning/perfcollector/cmd/perfprocessord/journal"
@@ -22,13 +22,7 @@ var j = []byte(`
 `)
 
 func TestJSONEncode(t *testing.T) {
-	//r := bytes.NewReader(j)
-
-	r, err := os.Open("/home/marco/gopath/src/github.com/businessperformancetuning/perfcollector/netcache.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
+	r := bytes.NewReader(j)
 
 	d := json.NewDecoder(r)
 	entry := 0
@@ -43,9 +37,11 @@ func TestJSONEncode(t *testing.T) {
 		}
 		k := fmt.Sprintf("%v_%v_%v_%v", wc.Site, wc.Host, wc.Run,
 			wc.Measurement.System)
-		//cache[k] = wc.Measurement.Measurement
 		entry++
 		t.Logf("%v\n", k)
 	}
 
+	if entry != 8 {
+		t.Errorf("expected 8 entries, got %d", entry)
+	}
 }

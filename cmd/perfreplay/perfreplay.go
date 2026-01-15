@@ -98,6 +98,9 @@ type config struct {
 	// Playback speed control
 	Speed float64 // Playback speed multiplier (1.0 = realtime, 2.0 = 2x faster, 0.5 = half speed)
 
+	// Workload scaling
+	Scale float64 // Workload intensity scale factor (1.0 = original, 1.5 = 150% intensity)
+
 	// Replay mode options
 	ReplayMode string // Replay mode: "all", "cpu", "memory", "disk", "cpu-memory"
 
@@ -105,6 +108,9 @@ type config struct {
 	Validate       bool   // Enable validation metrics collection
 	ValidationCSV  string // Output CSV file for validation data
 	ValidationRMSE float64 // Maximum acceptable RMSE (default: 5%)
+
+	// Real-time metrics collection
+	CollectActual bool // Collect actual system metrics during replay for comparison
 }
 
 func usage() {
@@ -139,6 +145,8 @@ Flags:
 	Disk mapper data file, e.g. ~/diskmapper.json
   --speed float
 	Playback speed multiplier (default: 1.0 = realtime, 2.0 = 2x faster, 0.5 = half speed)
+  --scale float
+	Workload intensity scale factor (default: 1.0 = original, 1.5 = 150% intensity, 0.5 = 50% intensity)
   --mode string
 	Replay mode: "all" (default), "cpu", "memory", "disk", "cpu-memory"
   --validate
@@ -147,6 +155,8 @@ Flags:
 	Output CSV file for validation data, e.g. ~/validation.csv
   --validation-rmse float
 	Maximum acceptable RMSE percentage (default: 5.0)
+  --collect-actual
+	Collect actual system metrics during replay for target vs actual comparison
 `)
 	os.Exit(2)
 }
@@ -169,13 +179,16 @@ func (c *config) FlagSet() *flag.FlagSet {
 	fs.Uint64Var(&c.Site, "siteid", 0, "")
 	fs.Uint64Var(&c.Host, "host", 0, "")
 	fs.Uint64Var(&c.Run, "run", 0, "")
-	// Playback speed and mode flags
+	// Playback speed, scale, and mode flags
 	fs.Float64Var(&c.Speed, "speed", 1.0, "")
+	fs.Float64Var(&c.Scale, "scale", 1.0, "")
 	fs.StringVar(&c.ReplayMode, "mode", "all", "")
 	// Validation flags
 	fs.BoolVar(&c.Validate, "validate", false, "")
 	fs.StringVar(&c.ValidationCSV, "validation-csv", "", "")
 	fs.Float64Var(&c.ValidationRMSE, "validation-rmse", 5.0, "")
+	// Real-time metrics collection
+	fs.BoolVar(&c.CollectActual, "collect-actual", false, "")
 	fs.Usage = usage
 	return fs
 }
@@ -292,6 +305,12 @@ func loadConfig() (*config, []string, error) {
 		os.Exit(1)
 	}
 
+	// Validate scale
+	if cfg.Scale <= 0 {
+		fmt.Fprintln(os.Stderr, "Scale must be greater than 0")
+		os.Exit(1)
+	}
+
 	// Validate replay mode
 	validModes := map[string]bool{
 		"all":        true,
@@ -330,6 +349,183 @@ var (
 	// map key site_host_run_system
 	previousCache = make(map[string]*journal.WrapPCCollection)
 )
+
+// metricsCollector collects real-time system metrics during replay
+type metricsCollector struct {
+	mu              sync.Mutex
+	prevStat        []byte
+	prevStatTime    time.Time
+	collectInterval time.Duration
+	stopChan        chan struct{}
+	wg              sync.WaitGroup
+
+	// Collected metrics
+	cpuSamples    []float64
+	memorySamples []float64
+}
+
+func newMetricsCollector(interval time.Duration) *metricsCollector {
+	return &metricsCollector{
+		collectInterval: interval,
+		stopChan:        make(chan struct{}),
+		cpuSamples:      make([]float64, 0, 100),
+		memorySamples:   make([]float64, 0, 100),
+	}
+}
+
+// readProcStat reads /proc/stat and returns CPU busy percentage
+func (mc *metricsCollector) readCPUBusy() (float64, error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, err
+	}
+
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	if mc.prevStat == nil {
+		mc.prevStat = data
+		mc.prevStatTime = time.Now()
+		return 0, nil
+	}
+
+	// Parse previous CPU line
+	prevCPU := parseCPULine(mc.prevStat)
+	currCPU := parseCPULine(data)
+
+	// Calculate deltas
+	prevTotal := prevCPU.user + prevCPU.nice + prevCPU.system + prevCPU.idle +
+		prevCPU.iowait + prevCPU.irq + prevCPU.softirq + prevCPU.steal
+	currTotal := currCPU.user + currCPU.nice + currCPU.system + currCPU.idle +
+		currCPU.iowait + currCPU.irq + currCPU.softirq + currCPU.steal
+
+	totalDelta := currTotal - prevTotal
+	idleDelta := currCPU.idle - prevCPU.idle
+
+	var busy float64
+	if totalDelta > 0 {
+		busy = 100.0 * float64(totalDelta-idleDelta) / float64(totalDelta)
+	}
+
+	mc.prevStat = data
+	mc.prevStatTime = time.Now()
+
+	return busy, nil
+}
+
+type cpuStats struct {
+	user, nice, system, idle, iowait, irq, softirq, steal uint64
+}
+
+func parseCPULine(data []byte) cpuStats {
+	var stats cpuStats
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "cpu ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 8 {
+				stats.user, _ = strconv.ParseUint(fields[1], 10, 64)
+				stats.nice, _ = strconv.ParseUint(fields[2], 10, 64)
+				stats.system, _ = strconv.ParseUint(fields[3], 10, 64)
+				stats.idle, _ = strconv.ParseUint(fields[4], 10, 64)
+				stats.iowait, _ = strconv.ParseUint(fields[5], 10, 64)
+				stats.irq, _ = strconv.ParseUint(fields[6], 10, 64)
+				stats.softirq, _ = strconv.ParseUint(fields[7], 10, 64)
+				if len(fields) >= 9 {
+					stats.steal, _ = strconv.ParseUint(fields[8], 10, 64)
+				}
+			}
+			break
+		}
+	}
+	return stats
+}
+
+// readMemoryUsed reads /proc/meminfo and returns memory used percentage
+func (mc *metricsCollector) readMemoryUsedPercent() (float64, error) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+
+	var memTotal, memAvailable uint64
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[0] {
+		case "MemTotal:":
+			memTotal, _ = strconv.ParseUint(fields[1], 10, 64)
+		case "MemAvailable:":
+			memAvailable, _ = strconv.ParseUint(fields[1], 10, 64)
+		}
+	}
+
+	if memTotal == 0 {
+		return 0, nil
+	}
+
+	used := memTotal - memAvailable
+	return 100.0 * float64(used) / float64(memTotal), nil
+}
+
+// start begins collecting metrics in the background
+func (mc *metricsCollector) start() {
+	mc.wg.Add(1)
+	go func() {
+		defer mc.wg.Done()
+		ticker := time.NewTicker(mc.collectInterval)
+		defer ticker.Stop()
+
+		// Prime the CPU calculation
+		mc.readCPUBusy()
+
+		for {
+			select {
+			case <-mc.stopChan:
+				return
+			case <-ticker.C:
+				if cpu, err := mc.readCPUBusy(); err == nil && cpu > 0 {
+					mc.mu.Lock()
+					mc.cpuSamples = append(mc.cpuSamples, cpu)
+					mc.mu.Unlock()
+				}
+				if mem, err := mc.readMemoryUsedPercent(); err == nil {
+					mc.mu.Lock()
+					mc.memorySamples = append(mc.memorySamples, mem)
+					mc.mu.Unlock()
+				}
+			}
+		}
+	}()
+}
+
+// stop stops collecting metrics and returns the collected samples
+func (mc *metricsCollector) stop() (cpuSamples, memorySamples []float64) {
+	close(mc.stopChan)
+	mc.wg.Wait()
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return mc.cpuSamples, mc.memorySamples
+}
+
+// getStats returns average and max of samples
+func metricsStats(samples []float64) (avg, max float64) {
+	if len(samples) == 0 {
+		return 0, 0
+	}
+	var sum float64
+	for _, v := range samples {
+		sum += v
+		if v > max {
+			max = v
+		}
+	}
+	avg = sum / float64(len(samples))
+	return avg, max
+}
 
 func parse(cfg *config, cur *journal.WrapPCCollection, cache map[string]parser.NIC) (interface{}, error) {
 	if cur.Site != cfg.Site {
@@ -630,9 +826,10 @@ func workerMem(ctx context.Context, wg *sync.WaitGroup, ready chan<- struct{}, c
 }
 
 var (
-	td        = make([]uint, 101) // Training data
-	numCores  = -1
-	frequency = -1
+	td          = make([]uint, 101) // Training data
+	numCores    = -1
+	frequency   = -1
+	scaleFactor = 1.0 // Workload intensity scale factor
 
 	dm = make(map[string]string) // Disk mapper data
 )
@@ -671,7 +868,18 @@ func workerStat(ctx context.Context, wg *sync.WaitGroup, ready chan<- struct{}, 
 			} else if busy > 100 {
 				busy = 100
 			}
-			units := int(td[int(busy)])
+
+			// Apply scale factor to the target busy percentage
+			scaledBusy := float64(busy) * scaleFactor
+			if scaledBusy > 100 {
+				scaledBusy = 100
+			}
+			busyIdx := int(scaledBusy)
+			if busyIdx > 100 {
+				busyIdx = 100
+			}
+
+			units := int(td[busyIdx])
 			if units == 0 {
 				// Nothing to do
 				log.Tracef("workerStat no load on cpu")
@@ -1056,8 +1264,14 @@ func _main() error {
 	if cfg.Speed != 1.0 {
 		log.Infof("Playback Speed: %.2fx", cfg.Speed)
 	}
+	if cfg.Scale != 1.0 {
+		log.Infof("Workload Scale: %.2fx", cfg.Scale)
+	}
 	if cfg.Validate {
 		log.Infof("Validation: enabled (MaxRMSE=%.1f%%)", cfg.ValidationRMSE)
+	}
+	if cfg.CollectActual {
+		log.Infof("Real-time metrics collection: enabled")
 	}
 
 	// Print disk mapping
@@ -1139,6 +1353,7 @@ func _main() error {
 
 	}
 	frequency = int(freq / time.Second) // Store frequency
+	scaleFactor = cfg.Scale             // Store scale factor for workers
 
 	// Apply speed multiplier to frequency
 	// Speed > 1.0 means faster playback (shorter intervals)
@@ -1215,6 +1430,15 @@ func _main() error {
 		criteria := validation.DefaultAcceptanceCriteria()
 		criteria.MaxRMSE = cfg.ValidationRMSE
 		validator = validation.NewCollector(criteria)
+	}
+
+	// Initialize real-time metrics collector if enabled
+	var metricsCol *metricsCollector
+	if cfg.CollectActual {
+		// Collect metrics at the same frequency as replay
+		metricsCol = newMetricsCollector(adjustedFreq)
+		metricsCol.start()
+		log.Infof("Real-time metrics collector started (interval: %v)", adjustedFreq)
 	}
 
 	// Rewind file
@@ -1406,6 +1630,9 @@ done:
 	fmt.Println("================================================================================")
 	fmt.Printf("Replay Duration:    %v\n", replayDuration.Round(time.Millisecond))
 	fmt.Printf("Playback Speed:     %.2fx\n", cfg.Speed)
+	if cfg.Scale != 1.0 {
+		fmt.Printf("Workload Scale:     %.2fx\n", cfg.Scale)
+	}
 	fmt.Printf("Replay Mode:        %s\n", cfg.ReplayMode)
 	fmt.Println()
 	fmt.Println("Records Processed:")
@@ -1422,6 +1649,22 @@ done:
 		fmt.Printf("  CPU:    %d\n", stat)
 		fmt.Printf("  Memory: %d\n", mem)
 		fmt.Printf("  Disk:   %d\n", disk)
+		fmt.Println()
+	}
+
+	// Output real-time metrics if collected
+	if metricsCol != nil {
+		cpuSamples, memSamples := metricsCol.stop()
+		fmt.Println("Real-Time Actual Metrics:")
+		fmt.Printf("  Samples collected: CPU=%d, Memory=%d\n", len(cpuSamples), len(memSamples))
+		if len(cpuSamples) > 0 {
+			cpuAvg, cpuMax := metricsStats(cpuSamples)
+			fmt.Printf("  CPU Busy:          avg=%.1f%%, max=%.1f%%\n", cpuAvg, cpuMax)
+		}
+		if len(memSamples) > 0 {
+			memAvg, memMax := metricsStats(memSamples)
+			fmt.Printf("  Memory Used:       avg=%.1f%%, max=%.1f%%\n", memAvg, memMax)
+		}
 		fmt.Println()
 	}
 

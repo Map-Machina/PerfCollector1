@@ -27,6 +27,7 @@ perfreplay
 perfcpumeasure
 perfcollectord
 perfprocessord
+perfcompare
 
 # Local planning and notes
 PROJECT_PLAN.md
